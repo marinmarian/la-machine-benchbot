@@ -22,6 +22,8 @@ def main():
 
     robot = arm.connect_follower()
     leader = arm.connect_leader()
+    # glide the follower to the leader's current pose first so it never jumps
+    arm.move_to(robot, leader.get_action(), seconds=2.0)
     print("Teleop live. Move the leader to the START pose, then press Enter to begin recording.")
     # mirror leader -> follower while the user positions the arm
     armed = threading.Event()
