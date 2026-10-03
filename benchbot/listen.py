@@ -15,6 +15,8 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -26,10 +28,25 @@ from faster_whisper import WhisperModel
 from rapidfuzz import fuzz, process
 
 import arm
+import vision
 
 SAMPLE_RATE = 16000
 COMMANDS_FILE = Path(__file__).parent / "commands.json"
 STOP_WORDS = {"stop", "halt", "freeze"}
+SAY = shutil.which("say")          # macOS offline TTS; None elsewhere -> print only
+speaking = threading.Event()       # set while we talk so the mic ignores our own voice
+
+
+def speak(msg: str) -> None:
+    print(f"  🗣 {msg}")
+    if not SAY:
+        return
+    speaking.set()
+    try:
+        subprocess.run([SAY, msg], check=False)
+        time.sleep(0.4)            # let the room tail die before listening again
+    finally:
+        speaking.clear()
 
 
 # ---------- command routing ----------
@@ -72,19 +89,22 @@ def utterances(energy_thresh: float = 0.01, silence_s: float = 0.7, max_s: float
 
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
                         blocksize=block, callback=cb):
-        buf, speaking, silent_for = [], False, 0.0
+        buf, in_speech, silent_for = [], False, 0.0
         while True:
             x = q.get()
+            if speaking.is_set():                 # that is us talking, not the user
+                buf, in_speech, silent_for = [], False, 0.0
+                continue
             rms = float(np.sqrt(np.mean(x ** 2)))
             if rms > energy_thresh:
-                speaking, silent_for = True, 0.0
+                in_speech, silent_for = True, 0.0
                 buf.append(x)
-            elif speaking:
+            elif in_speech:
                 silent_for += 0.05
                 buf.append(x)
                 if silent_for >= silence_s or len(buf) * 0.05 >= max_s:
                     yield np.concatenate(buf)
-                    buf, speaking, silent_for = [], False, 0.0
+                    buf, in_speech, silent_for = [], False, 0.0
 
 
 def meter(seconds: float = 8.0):
@@ -113,6 +133,7 @@ def main():
     ap.add_argument("--energy", type=float, default=0.01, help="VAD threshold; raise in a noisy room")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--meter", action="store_true", help="print live mic RMS for 8 s and exit")
+    ap.add_argument("--no-vision", action="store_true", help="skip the camera slot check before skills")
     args = ap.parse_args()
     if args.meter:
         return meter()
@@ -121,6 +142,12 @@ def main():
     model = WhisperModel(args.model, device="cpu", compute_type="int8")
     table = load_commands()
     print("Commands:", ", ".join(sorted(table)) or "(none — record some skills first)")
+
+    use_vision = vision.available() and not args.no_vision
+    if use_vision:
+        print(f"vision: on ({len(vision.load_config()['slots'])} slots checked before skills)")
+    else:
+        print("vision: off" + ("" if args.no_vision else "  (python vision.py setup / capture to enable)"))
 
     robot = None if args.dry_run else arm.connect_follower()
     stop_flag = threading.Event()
@@ -140,6 +167,11 @@ def main():
                 if not arm.skill_path(s).exists():
                     print(f"  skill '{s}' not recorded yet (python record.py {s})")
                     break
+                if use_vision:
+                    ok, why = vision.requirement_ok(s)
+                    if not ok:
+                        speak(f"Sorry, {why}.")
+                        break
                 print(f"  ▶ {s}")
                 if robot is None:
                     time.sleep(1.0)
