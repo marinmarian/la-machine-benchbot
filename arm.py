@@ -54,7 +54,13 @@ def _connect_with_file_calibration(device) -> None:
     device.connect(calibrate=False)
     if not device.is_calibrated:
         print(f"{device.id}: motor calibration differs from file, writing file values to motors")
+        # Lock=0 lets the Feetech motors persist these registers to EEPROM (lerobot sets
+        # Lock=1 whenever torque is enabled, which would make the write RAM-only).
+        for motor in device.bus.motors:
+            device.bus.write("Lock", motor, 0)
         device.bus.write_calibration(device.calibration)
+        for motor in device.bus.motors:
+            device.bus.write("Lock", motor, 1)
 
 
 def connect_follower(max_relative_target: float | None = None) -> SO101Follower:
@@ -98,6 +104,24 @@ def list_skills() -> list[str]:
 
 
 GLIDE_DEG_PER_S = 30.0   # max joint speed while gliding to a start pose
+GRIPPER_MIN = float(os.environ.get("GRIPPER_MIN", "3"))   # never command the gripper below this (0..100);
+                                                          # grinding against the closed stop trips overload
+
+
+def send(robot: SO101Follower, action: dict[str, float]) -> dict[str, float]:
+    """send_action with the gripper clamped to >= GRIPPER_MIN. Use this everywhere."""
+    if "gripper.pos" in action and action["gripper.pos"] < GRIPPER_MIN:
+        action = {**action, "gripper.pos": GRIPPER_MIN}
+    return robot.send_action(action)
+
+
+def disconnect(robot: SO101Follower) -> None:
+    """Release the gripper (so it never sits pushing on its stop), then disconnect.
+    Arm joints keep holding unless DISABLE_TORQUE_ON_DISCONNECT=true."""
+    try:
+        robot.bus.disable_torque("gripper")
+    finally:
+        robot.disconnect()
 
 
 def move_to(robot: SO101Follower, target: dict[str, float], seconds: float | None = None, fps: int = 30):
@@ -113,7 +137,7 @@ def move_to(robot: SO101Follower, target: dict[str, float], seconds: float | Non
     n = max(1, int(seconds * fps))
     for i in range(1, n + 1):
         a = i / n
-        robot.send_action({k: start[k] + (target[k] - start[k]) * a for k in target})
+        send(robot, {k: start[k] + (target[k] - start[k]) * a for k in target})
         time.sleep(1 / fps)
 
 
@@ -128,7 +152,7 @@ def play(robot: SO101Follower, skill: dict, speed: float = 1.0, should_stop=lamb
     for i, row in enumerate(frames):
         if should_stop():
             return False
-        robot.send_action(dict(zip(keys, row)))
+        send(robot, dict(zip(keys, row)))
         # sleep against wall clock so timing doesn't drift
         target_t = t0 + (i + 1) * dt
         time.sleep(max(0.0, target_t - time.perf_counter()))
