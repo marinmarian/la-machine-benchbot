@@ -29,7 +29,7 @@ import arm
 
 SAMPLE_RATE = 16000
 COMMANDS_FILE = Path(__file__).parent / "commands.json"
-STOP_WORDS = {"stop", "halt", "freeze", "wait"}
+STOP_WORDS = {"stop", "halt", "freeze"}
 
 
 # ---------- command routing ----------
@@ -87,6 +87,23 @@ def utterances(energy_thresh: float = 0.01, silence_s: float = 0.7, max_s: float
                     buf, speaking, silent_for = [], False, 0.0
 
 
+def meter(seconds: float = 8.0):
+    """Print live mic RMS so --energy can be chosen from measurement, not guesswork."""
+    block = int(SAMPLE_RATE * 0.05)
+    levels: list[float] = []
+
+    def cb(indata, frames, t, status):
+        rms = float(np.sqrt(np.mean(indata[:, 0] ** 2)))
+        levels.append(rms)
+        print(f"\r  rms={rms:.4f}  {'#' * min(60, int(rms * 1000))}".ljust(80), end="", flush=True)
+
+    print(f"Mic meter for {seconds:.0f}s: stay quiet first, then say a command…")
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32", blocksize=block, callback=cb):
+        time.sleep(seconds)
+    quiet = float(np.percentile(levels, 20)); loud = float(np.percentile(levels, 95))
+    print(f"\n  room noise ~{quiet:.4f}   speech peaks ~{loud:.4f}   suggested --energy {max(0.005, quiet * 3):.3f}")
+
+
 # ---------- main ----------
 
 def main():
@@ -95,7 +112,10 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--energy", type=float, default=0.01, help="VAD threshold; raise in a noisy room")
     ap.add_argument("--speed", type=float, default=1.0)
+    ap.add_argument("--meter", action="store_true", help="print live mic RMS for 8 s and exit")
     args = ap.parse_args()
+    if args.meter:
+        return meter()
 
     print(f"Loading whisper '{args.model}' (CPU int8)…")
     model = WhisperModel(args.model, device="cpu", compute_type="int8")
