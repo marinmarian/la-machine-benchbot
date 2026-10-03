@@ -7,3 +7,4 @@ slide-*.jpg
 benchbot/skills/*.json
 !benchbot/skills/.gitkeep
 .env
+benchbot/vision/

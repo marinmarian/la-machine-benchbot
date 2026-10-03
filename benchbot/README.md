@@ -40,10 +40,31 @@ macOS: give the terminal microphone permission the first time `listen.py` runs.
 3. **Edit** `commands.json` for the phrases you'll actually say.
 4. **Run** the demo: `python listen.py` (first check `python listen.py --dry-run`).
 
+## Camera slot check (optional, offline)
+
+Before a skill runs, `listen.py` can look at the bench and refuse out loud when the tool is not there
+("Sorry, there is nothing in the screwdriver slot"). No ML model: two reference photos per setup.
+
+```bash
+python vision.py setup            # fix the camera first; draw a box per slot and name it (screwdriver, tweezers, …)
+python vision.py capture full     # every tool in its slot
+python vision.py capture empty    # every slot empty
+python vision.py check            # sanity check, prints PRESENT/absent + margin per slot
+```
+
+- A skill named like a slot requires that slot to be present. Other rules go in `slots.json` under
+  `requires`, e.g. `"return_tool": {"screwdriver": "empty"}`.
+- Checks run before every skill in a chain. `--no-vision` disables them. If `slots.json` or the photos
+  are missing, listen.py says `vision: off` and runs as before.
+- Re-capture `full` and `empty` in the demo room under demo lighting, right before the demo (20 s).
+- Boxes must not be covered by the arm in its home pose. Margins near 0 mean the box is ambiguous: make it tighter around where the tool actually sits.
+- The robot talks via macOS `say`; the mic is muted while it speaks so it cannot trigger itself.
+
 ## Demo-day tips
 
 - Tape the tool slots to the bench. Replay is a player piano: it plays the same roll every time, so the tools must be where they were when you recorded.
 - Lower the follower's speed/accel if grasps slip; smooth beats fast on video.
+- Re-capture the two vision reference photos in the final room/lighting.
 - Keep a hand on the power switch. `stop` (voice or typed) interrupts between frames.
 - Noisy room: run with `--energy 0.02` or `0.03`, and hold the laptop mic close. Typing the command is an acceptable plan B — the judges care about the arm, not the mic.
 - `--model small.en` if `base.en` mishears tool names; add misheard variants to `commands.json` instead of fighting the model (e.g. `"screw driver"`, `"screwdrivers"`).
