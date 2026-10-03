@@ -16,8 +16,15 @@ python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', devi
 
 Ports and calibration ids live in `.env` (loaded by `arm.py`; shell env vars override).
 After plugging both arms in, confirm with `ls /dev/tty.usbmodem*`. If the names changed, edit `.env`.
-Calibration files: `~/.cache/huggingface/lerobot/calibration/robots/so_follower/follower_so101.json`
-and `.../teleoperators/so_leader/leader_so101.json`.
+Calibration files live in `~/.cache/huggingface/lerobot/calibration/` and a copy is committed under
+`benchbot/calibration/` (same layout; ids `follower_so101`, `leader_so101`, plus `*_left` for the second pair).
+Restore them on a fresh machine with:
+
+```bash
+cp -R benchbot/calibration/. ~/.cache/huggingface/lerobot/calibration/
+```
+
+Recorded skills (`benchbot/skills/*.json`) are committed too; they only replay correctly on the arms they were recorded with.
 
 Run scripts with the env active: `python record.py home`, `python replay.py home`, `python listen.py`.
 (`uv run` is not used: the pyproject's `lerobot[feetech]` line would pull a second lerobot + torch from PyPI.)

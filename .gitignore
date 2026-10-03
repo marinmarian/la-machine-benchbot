@@ -4,8 +4,6 @@ __pycache__/
 node_modules/
 *.pdf
 slide-*.jpg
-benchbot/skills/*.json
-!benchbot/skills/.gitkeep
 .env
 benchbot/vision/
 benchbot/dataset/
