@@ -86,11 +86,15 @@ python vision.py watch                         # boxes now come from the detecto
 python wristrec.py --probe                        # every camera tiled with its index; put the wrist one in .env as WRIST_CAMERA
 python wristrec.py hover1                         # teleop with the leader: drive to a hover pose, h to hold,
                                                   # move the tool around under the camera with s (snapshot) / r (record), j once
-python wristrec.py screw1 --skill screwdriver --hold-at-hover   # replay up to 1 s before the grasp, hold there, c continues
+python wristrec.py screw1 --skill screwdriver --hold-at-hover   # replay up to 2 s before the grasp, hold there, c continues
 ```
 
-- `j` (only while holding) nudges each arm joint ±3° and saves one settled frame per position, tagged
-  `jog/<joint>/<±deg>`. Those frames give the pixels-per-degree table.
+- `j` (only while holding) nudges pan, lift, elbow and wrist_flex ±3° and saves one settled frame per
+  position, tagged `jog/<joint>/<±deg>`. Those frames give the pixels-per-degree table.
+- Scope (decided 2026-10-03): the alignment corrects the tool's **position only** (left/right, closer/further).
+  Tool **rotation is out of scope**: it would mean also turning `wrist_roll` and solving for orientation,
+  which is much harder. The tool still has to lie at roughly the angle it had when the skill was recorded.
+  `wrist_roll` is therefore not jogged, and snapshots only need position offsets.
 - Output goes to `wrist_data/<session>/`: `frames/*.jpg`, `samples.jsonl` (`t`, `file`, `mode`, `tag`, `q` measured, `cmd`
   commanded), and `meta.json`. Running the same session name again appends. `wrist_data/` is not committed.
 

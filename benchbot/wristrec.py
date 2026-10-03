@@ -8,7 +8,7 @@ pixels-per-degree table offline.
 Keys (camera window focused):
     r  start/stop continuous recording       s  save one snapshot
     h  hold the follower where it is / resume (teleop: glides back to the leader; skill: pauses)
-    j  jog probe from the held pose: each arm joint +-step, one settled frame per position
+    j  jog probe from the held pose: pan, lift, elbow, wrist_flex +-step, one settled frame per position
     c  continue the skill from where it stopped (--skill)
     q  quit
 
@@ -36,7 +36,8 @@ import numpy as np
 import arm
 
 OUT = Path(__file__).parent / "wrist_data"
-JOG_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
+# No wrist_roll: alignment corrects position only, tool rotation is out of scope (README).
+JOG_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"]
 HELP = "r rec  s snap  h hold  j jog  c continue  q quit"
 
 
@@ -179,7 +180,8 @@ def main():
     ap.add_argument("--fps", type=int, default=30, help="control rate in teleop (skills use their own fps)")
     ap.add_argument("--skill", help="replay this skill instead of teleop (no leader needed)")
     ap.add_argument("--hold-at-hover", action="store_true", help="stop the skill at the hover frame")
-    ap.add_argument("--hover-lead", type=float, default=1.0, help="hover = this many seconds before the grasp")
+    ap.add_argument("--hover-lead", type=float, default=2.0,
+                    help="hover = this many seconds before the grasp; high enough to slide the tool around under the open jaws")
     ap.add_argument("--hover-frame", type=int, help="hover frame index, overrides the automatic one")
     ap.add_argument("--jog-step", type=float, default=3.0, help="degrees per jog")
     args = ap.parse_args()
