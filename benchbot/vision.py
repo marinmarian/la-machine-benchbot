@@ -1,10 +1,11 @@
 """Slot presence check with a fixed webcam, fully offline, no ML model.
 
 Setup (camera fixed, all tools in their slots):
-    python vision.py setup            # draw a box per slot, name them -> slots.json
-    python vision.py capture full     # photo with every tool in its slot
-    python vision.py capture empty    # photo with every slot empty
+    python vision.py setup            # draw a box per slot, name them -> slots.json; that same
+                                      # frame is saved as the "full" reference (so do it with tools in)
+    python vision.py capture empty    # photo with every slot empty  (don't move the camera!)
     python vision.py check            # present / absent per slot (add a slot name for one)
+    python vision.py check --show     # same, plus a window with the boxes drawn on the live frame
     python vision.py check --image f  # same, on a saved frame (no camera)
 
 How it works: each slot ROI is cropped from the live frame and from both reference
@@ -146,7 +147,24 @@ def cmd_setup(args):
     cfg.setdefault("requires", {})
     SLOTS_FILE.write_text(json.dumps(cfg, indent=2) + "\n")
     print(f"saved {len(slots)} slots -> {SLOTS_FILE}")
-    print("next: python vision.py capture full   (then remove the tools)   python vision.py capture empty")
+    REF_DIR.mkdir(exist_ok=True)
+    cv2.imwrite(str(REFS["full"]), _with_boxes(frame, cfg))
+    print(f"saved this frame as the 'full' reference -> {REFS['full']}  (open it: boxes must sit on the tools)")
+    print("next: remove every tool, do NOT move the camera, then:  python vision.py capture empty")
+
+
+def _with_boxes(frame: np.ndarray, cfg: dict, state: dict | None = None) -> np.ndarray:
+    """Copy of frame with slot boxes (green = present, red = absent, white = unknown) and labels."""
+    out = frame.copy()
+    for slot, (x, y, w, h) in cfg["slots"].items():
+        color, tag = (255, 255, 255), slot
+        if state and slot in state:
+            present, margin = state[slot]
+            color = (0, 200, 0) if present else (0, 0, 255)
+            tag = f"{slot} {margin:+.0f}"
+        cv2.rectangle(out, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(out, tag, (x, max(15, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+    return out
 
 
 def cmd_capture(args):
@@ -154,18 +172,27 @@ def cmd_capture(args):
     if cfg is None:
         sys.exit("run setup first")
     REF_DIR.mkdir(exist_ok=True)
-    frame = grab_frame(cfg)
-    for slot, (x, y, w, h) in cfg["slots"].items():
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 1)
+    frame = _with_boxes(grab_frame(cfg), cfg)
     cv2.imwrite(str(REFS[args.which]), frame)
     print(f"saved {REFS[args.which]}  ({frame.shape[1]}x{frame.shape[0]})")
 
 
 def cmd_check(args):
+    cfg = load_config()
+    if cfg is None:
+        sys.exit("no slots.json; run: python vision.py setup")
     t = time.perf_counter()
-    for slot, (present, margin) in check(args.slot, args.image).items():
+    frame = cv2.imread(args.image) if args.image else grab_frame(cfg)
+    state = check_frame(frame, cfg)
+    if args.slot:
+        state = {args.slot: state[args.slot]}
+    for slot, (present, margin) in state.items():
         print(f"  {slot:14s} {'PRESENT' if present else 'absent ':8s} margin {margin:+.1f}")
-    print(f"  ({time.perf_counter() - t:.2f}s)")
+    print(f"  ({time.perf_counter() - t:.2f}s)   |margin| < 10 is unreliable: tighten that box or re-capture")
+    if args.show:
+        cv2.imshow("slots (any key to close)", _with_boxes(frame, cfg, state))
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
 
 def main():
@@ -173,7 +200,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("setup"); s.add_argument("--camera", type=int, default=0); s.set_defaults(fn=cmd_setup)
     c = sub.add_parser("capture"); c.add_argument("which", choices=list(REFS)); c.set_defaults(fn=cmd_capture)
-    k = sub.add_parser("check"); k.add_argument("slot", nargs="?"); k.add_argument("--image"); k.set_defaults(fn=cmd_check)
+    k = sub.add_parser("check"); k.add_argument("slot", nargs="?"); k.add_argument("--image"); k.add_argument("--show", action="store_true"); k.set_defaults(fn=cmd_check)
     args = ap.parse_args()
     args.fn(args)
 
