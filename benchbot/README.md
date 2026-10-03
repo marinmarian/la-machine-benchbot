@@ -40,7 +40,32 @@ macOS: give the terminal microphone permission the first time `listen.py` runs.
 3. **Edit** `commands.json` for the phrases you'll actually say.
 4. **Run** the demo: `python listen.py` (first check `python listen.py --dry-run`).
 
-## Camera slot check (optional, offline)
+## Tool detector (YOLO, trained on your own tools, offline)
+
+Live camera window with a labelled box on every tool, and a spoken refusal when the tool a skill
+needs is not on the bench ("Sorry, I don't see the screwdriver on the bench"). Zero-shot models
+failed on these objects, so we train a small YOLO on auto-labelled frames. Budget ~1 h.
+
+```bash
+# camera fixed in its final spot, arm parked OUT of view, bench empty
+python collect.py --background                 # saves vision/empty.jpg + empty frames
+# park the arm IN view, bench still empty, run it again (teaches "arm is not a tool")
+python collect.py --background
+# one object at a time, fully inside the frame; move + rotate it around the bench for 45 s
+python collect.py screwdriver
+python collect.py microphone                   # class name = skill name
+python collect.py motor  ...
+python train.py                                # ~40 epochs on the Mac GPU -> weights/benchbot.pt
+python vision.py watch                         # boxes now come from the detector
+```
+
+- Labels come from background subtraction against `vision/empty.jpg`: frames with no object, two
+  objects, or an object touching the frame edge are skipped (the window says so).
+- Weak class? 30 more seconds of `collect.py <class>` then `train.py` again beats more epochs.
+- `weights/benchbot.pt` (~6 MB) is committed so a fresh clone demos. `dataset/` and `runs/` are not.
+- Re-check `vision.py watch` in the demo room; retrain only if a class drops out.
+
+## Camera slot check (fallback, no model)
 
 Before a skill runs, `listen.py` can look at the bench and refuse out loud when the tool is not there
 ("Sorry, there is nothing in the screwdriver slot"). No ML model: two reference photos per setup.
