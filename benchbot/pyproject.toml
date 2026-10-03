@@ -9,6 +9,8 @@ dependencies = [
     "sounddevice>=0.4",
     "numpy",
     "rapidfuzz",
+    "opencv-python",
+    "placo",            # adjust.py kinematics
 ]
 
 [tool.uv]

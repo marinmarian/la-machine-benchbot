@@ -11,3 +11,4 @@ benchbot/runs/
 benchbot/weights/yolov8n.pt
 
 benchbot/wrist_data/
+benchbot/skills/backup/

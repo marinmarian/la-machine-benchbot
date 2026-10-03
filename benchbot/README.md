@@ -101,6 +101,24 @@ room to slide it under the open jaws). Then `--hold-at-hover` stops there instea
 - Output goes to `wrist_data/<session>/`: `frames/*.jpg`, `samples.jsonl` (`t`, `file`, `mode`, `tag`, `q` measured, `cmd`
   commanded), and `meta.json`. Running the same session name again appends. `wrist_data/` is not committed.
 
+## Nudging a recorded skill (`adjust.py`)
+
+Shift part of a skill in space without re-recording, e.g. grip 3 mm lower because the tool slipped out:
+
+```bash
+python adjust.py screwdriver4 --dz -0.3 --window 164 180 250 282 --dry-run   # report only
+python adjust.py screwdriver4 --dz -0.3 --window 164 180 250 282
+```
+
+- `--dx/--dy/--dz` are cm in the robot base frame (z up). `--window A B C E`: the shift eases in over
+  frames A..B, is full from B to C, eases out over C..E. Pick them from the joint values: for screwdriver4,
+  164-180 is the last descent, 180-250 the grip, and 250-282 the start of the lift.
+- Each frame goes through forward kinematics, gets the shift added, and goes back through inverse kinematics
+  (placo, `urdf/so101_new_calib_kinematics.urdf`). `wrist_roll` and the gripper stay as recorded.
+  The dry run prints the achieved shift, any tilt and the joint changes per frame.
+- The original goes to `skills/backup/` (not committed) and the skill's `"adjustments"` list logs what was done.
+- Needs `uv pip install placo`.
+
 ## Camera slot check (fallback, no model)
 
 Before a skill runs, `listen.py` can look at the bench and refuse out loud when the tool is not there
