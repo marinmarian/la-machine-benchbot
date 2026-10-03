@@ -29,7 +29,7 @@ def main():
     armed = threading.Event()
     threading.Thread(target=lambda: (input(), armed.set()), daemon=True).start()
     while not armed.is_set():
-        robot.send_action(leader.get_action())
+        arm.send(robot, leader.get_action())
         time.sleep(1 / args.fps)
 
     print(f"RECORDING '{args.name}' … press Enter to stop.")
@@ -45,13 +45,13 @@ def main():
         if keys is None:
             keys = list(action.keys())
         frames.append([float(action[k]) for k in keys])
-        robot.send_action(action)
+        arm.send(robot, action)
         i += 1
         time.sleep(max(0.0, t0 + i * dt - time.perf_counter()))
 
     p = arm.save_skill(args.name, keys, frames, args.fps)
     print(f"Saved {len(frames)} frames ({len(frames)/args.fps:.1f}s) -> {p}")
-    robot.disconnect()
+    arm.disconnect(robot)
     leader.disconnect()
 
 

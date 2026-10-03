@@ -24,7 +24,7 @@ def main():
     try:
         arm.play(robot, arm.load_skill(args.name), speed=args.speed)
     finally:
-        robot.disconnect()
+        arm.disconnect(robot)
 
 
 if __name__ == "__main__":

@@ -174,7 +174,7 @@ def main():
         pass
     finally:
         if robot is not None:
-            robot.disconnect()
+            arm.disconnect(robot)
 
 
 if __name__ == "__main__":
