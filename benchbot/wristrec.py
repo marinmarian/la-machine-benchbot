@@ -210,7 +210,7 @@ def main():
     root = OUT / args.session
     writer = Writer(root)
     meta = {"session": args.session, "created": datetime.now().isoformat(timespec="seconds"),
-            "camera": int(args.camera), "resolution": [w, h], "fps": fps, "follower_id": arm.FOLLOWER_ID,
+            "camera": int(args.camera), "resolution": [w, h], "fps": fps, "follower_id": robot.id,
             "skill": args.skill, "hover_frame": hover, "jog_step": args.jog_step}
     (root / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"camera {args.camera} at {w}x{h}, saving to {root}")

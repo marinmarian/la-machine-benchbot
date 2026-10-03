@@ -14,8 +14,14 @@ uv pip install --python "$(which python)" faster-whisper sounddevice rapidfuzz
 python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', compute_type='int8')"   # pre-download, verified with HF_HUB_OFFLINE=1
 ```
 
-Ports and calibration ids live in `.env` (loaded by `arm.py`; shell env vars override).
-After plugging both arms in, confirm with `ls /dev/tty.usbmodem*`. If the names changed, edit `.env`.
+Arms are identified by their controller board's USB serial, so ports never need editing:
+`python arm.py` lists what is connected (role, calibration id, port). The serial -> calibration id
+map is `arms.json`. A board it hasn't seen is matched once by reading the calibration stored in its
+motors (read-only) and comparing with the calibration files, then saved there.
+`FOLLOWER_ID` / `LEADER_ID` in `.env` pin which arm to use: a script refuses to run on a different
+arm (skills only replay correctly on the arm they were recorded on). Unset, it uses whichever
+follower/leader is plugged in. `FOLLOWER_PORT` / `LEADER_PORT` are only a fallback for a board
+that can't be identified.
 Calibration files live in `~/.cache/huggingface/lerobot/calibration/` and a copy is committed under
 `benchbot/calibration/` (same layout; ids `follower_so101`, `leader_so101`, plus `*_left` for the second pair).
 Restore them on a fresh machine with:
