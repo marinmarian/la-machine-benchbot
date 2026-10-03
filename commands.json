@@ -1,0 +1,17 @@
+{
+  "give me the screwdriver": "screwdriver",
+  "hand me the screwdriver": "screwdriver",
+  "screwdriver please": "screwdriver",
+  "give me the tweezers": "tweezers",
+  "hand me the tweezers": "tweezers",
+  "give me the spudger": "spudger",
+  "pry tool": "spudger",
+  "take it back": "return_tool",
+  "put it back": "return_tool",
+  "clean up": "cleanup",
+  "clear the bench": "cleanup",
+  "wipe the desk": "cleanup",
+  "go home": "home",
+  "reset": "home",
+  "full reset": ["return_tool", "cleanup", "home"]
+}
