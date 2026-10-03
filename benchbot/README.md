@@ -72,6 +72,22 @@ python vision.py watch                         # boxes now come from the detecto
 - `weights/benchbot.pt` (~6 MB) is committed so a fresh clone demos. `dataset/` and `runs/` are not.
 - Re-check `vision.py watch` in the demo room; retrain only if a class drops out.
 
+## Wrist camera dataset (for SAM alignment experiments)
+
+`wristrec.py` records wrist-camera frames with the follower's measured joints next to each one.
+
+```bash
+python wristrec.py --probe                        # every camera tiled with its index; put the wrist one in .env as WRIST_CAMERA
+python wristrec.py hover1                         # teleop with the leader: drive to a hover pose, h to hold,
+                                                  # move the tool around under the camera with s (snapshot) / r (record), j once
+python wristrec.py screw1 --skill screwdriver --hold-at-hover   # replay up to 1 s before the grasp, hold there, c continues
+```
+
+- `j` (only while holding) nudges each arm joint ±3° and saves one settled frame per position, tagged
+  `jog/<joint>/<±deg>`. Those frames give the pixels-per-degree table.
+- Output goes to `wrist_data/<session>/`: `frames/*.jpg`, `samples.jsonl` (`t`, `file`, `mode`, `tag`, `q` measured, `cmd`
+  commanded), and `meta.json`. Running the same session name again appends. `wrist_data/` is not committed.
+
 ## Camera slot check (fallback, no model)
 
 Before a skill runs, `listen.py` can look at the bench and refuse out loud when the tool is not there

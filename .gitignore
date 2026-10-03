@@ -9,3 +9,5 @@ benchbot/vision/
 benchbot/dataset/
 benchbot/runs/
 benchbot/weights/yolov8n.pt
+
+benchbot/wrist_data/
