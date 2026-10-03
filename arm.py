@@ -15,8 +15,21 @@ import os
 import time
 from pathlib import Path
 
-from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
-from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+
+def _load_dotenv(path: Path = Path(__file__).parent / ".env") -> None:
+    """Load KEY=VALUE lines from .env into os.environ (existing vars win)."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+
+_load_dotenv()
 
 FOLLOWER_PORT = os.environ.get("FOLLOWER_PORT", "/dev/tty.usbmodem_FOLLOWER")
 LEADER_PORT = os.environ.get("LEADER_PORT", "/dev/tty.usbmodem_LEADER")
@@ -28,8 +41,8 @@ SKILLS_DIR.mkdir(exist_ok=True)
 
 
 def connect_follower(max_relative_target: float | None = None) -> SO101Follower:
-    # max_relative_target caps how far a single command may move a joint
-    # (units are lerobot's normalised joint range). Safety net if a file is corrupt.
+    # max_relative_target caps how far a single command may move a joint, in degrees
+    # (lerobot default use_degrees=True; gripper is 0..100). Safety net if a file is corrupt.
     cfg = SO101FollowerConfig(port=FOLLOWER_PORT, id=FOLLOWER_ID,
                               max_relative_target=max_relative_target)
     robot = SO101Follower(cfg)
@@ -79,6 +92,7 @@ def move_to(robot: SO101Follower, target: dict[str, float], seconds: float = 2.0
 def play(robot: SO101Follower, skill: dict, speed: float = 1.0, should_stop=lambda: False) -> bool:
     """Replay a skill. Returns False if interrupted."""
     keys, frames, fps = skill["keys"], skill["frames"], skill["fps"]
+    speed = min(speed, 1.0)                       # never faster than it was recorded
     first = dict(zip(keys, frames[0]))
     move_to(robot, first, seconds=1.5)            # glide to the start pose first
     dt = 1 / (fps * speed)
