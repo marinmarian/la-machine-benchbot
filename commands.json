@@ -8,10 +8,15 @@
   "pry tool": "spudger",
   "take it back": "return_tool",
   "put it back": "return_tool",
-  "clean up": "cleanup",
-  "clear the bench": "cleanup",
-  "wipe the desk": "cleanup",
+  "clean up": "clean",
+  "clear the bench": "clean",
+  "wipe the desk": "clean",
   "go home": "home",
   "reset": "home",
-  "full reset": ["return_tool", "cleanup", "home"]
+  "full reset": [
+    "return_tool",
+    "clean",
+    "home"
+  ],
+  "clean the bench": "clean"
 }
