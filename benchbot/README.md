@@ -46,10 +46,12 @@ Before a skill runs, `listen.py` can look at the bench and refuse out loud when 
 ("Sorry, there is nothing in the screwdriver slot"). No ML model: two reference photos per setup.
 
 ```bash
-python vision.py setup            # fix the camera first; draw a box per slot and name it (screwdriver, tweezers, …)
-python vision.py capture full     # every tool in its slot
-python vision.py capture empty    # every slot empty
-python vision.py check            # sanity check, prints PRESENT/absent + margin per slot
+python vision.py setup            # camera fixed, tools IN their slots; draw a tight box per slot, name it like the skill
+                                  # (screwdriver, microphone, …). This frame becomes the "full" reference.
+python vision.py capture empty    # every slot empty, camera untouched
+python vision.py check --show     # PRESENT/absent + margin per slot, boxes drawn on the frame
+python vision.py watch            # live window, every slot boxed + labelled, green = present, red = absent
+python listen.py --show           # same live window during the demo
 ```
 
 - A skill named like a slot requires that slot to be present. Other rules go in `slots.json` under
@@ -57,7 +59,8 @@ python vision.py check            # sanity check, prints PRESENT/absent + margin
 - Checks run before every skill in a chain. `--no-vision` disables them. If `slots.json` or the photos
   are missing, listen.py says `vision: off` and runs as before.
 - Re-capture `full` and `empty` in the demo room under demo lighting, right before the demo (20 s).
-- Boxes must not be covered by the arm in its home pose. Margins near 0 mean the box is ambiguous: make it tighter around where the tool actually sits.
+- Boxes must not be covered by the arm in its home pose. Margins under 10 mean the box is ambiguous: make it tighter around where the tool actually sits, or redo setup.
+- Real test: take one tool out and run `check --show`. Only that slot should turn red.
 - The robot talks via macOS `say`; the mic is muted while it speaks so it cannot trigger itself.
 
 ## Demo-day tips
