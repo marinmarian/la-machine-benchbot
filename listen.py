@@ -137,6 +137,9 @@ def main():
         try:
             stop_flag.clear()
             for s in skills:
+                if not arm.skill_path(s).exists():
+                    print(f"  skill '{s}' not recorded yet (python record.py {s})")
+                    break
                 print(f"  ▶ {s}")
                 if robot is None:
                     time.sleep(1.0)
