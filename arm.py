@@ -35,6 +35,8 @@ FOLLOWER_PORT = os.environ.get("FOLLOWER_PORT", "/dev/tty.usbmodem_FOLLOWER")
 LEADER_PORT = os.environ.get("LEADER_PORT", "/dev/tty.usbmodem_LEADER")
 FOLLOWER_ID = os.environ.get("FOLLOWER_ID", "bench_follower")  # must match lerobot-calibrate id
 LEADER_ID = os.environ.get("LEADER_ID", "bench_leader")
+# False (default) keeps the follower holding its pose after a script exits.
+DISABLE_TORQUE_ON_DISCONNECT = os.environ.get("DISABLE_TORQUE_ON_DISCONNECT", "false").lower() in ("1", "true", "yes")
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 SKILLS_DIR.mkdir(exist_ok=True)
@@ -44,7 +46,8 @@ def connect_follower(max_relative_target: float | None = None) -> SO101Follower:
     # max_relative_target caps how far a single command may move a joint, in degrees
     # (lerobot default use_degrees=True; gripper is 0..100). Safety net if a file is corrupt.
     cfg = SO101FollowerConfig(port=FOLLOWER_PORT, id=FOLLOWER_ID,
-                              max_relative_target=max_relative_target)
+                              max_relative_target=max_relative_target,
+                              disable_torque_on_disconnect=DISABLE_TORQUE_ON_DISCONNECT)
     robot = SO101Follower(cfg)
     robot.connect()
     return robot
@@ -79,9 +82,19 @@ def list_skills() -> list[str]:
     return sorted(p.stem for p in SKILLS_DIR.glob("*.json"))
 
 
-def move_to(robot: SO101Follower, target: dict[str, float], seconds: float = 2.0, fps: int = 30):
-    """Linearly interpolate from the current pose to `target` so the arm never jumps."""
+GLIDE_DEG_PER_S = 30.0   # max joint speed while gliding to a start pose
+
+
+def move_to(robot: SO101Follower, target: dict[str, float], seconds: float | None = None, fps: int = 30):
+    """Linearly interpolate from the current pose to `target` so the arm never jumps.
+
+    If `seconds` is None the duration is scaled to the largest joint delta
+    (GLIDE_DEG_PER_S), with a 1.5 s floor, so far-away starts are not fast.
+    """
     start = current_pose(robot)
+    if seconds is None:
+        biggest = max(abs(target[k] - start[k]) for k in target)
+        seconds = max(1.5, biggest / GLIDE_DEG_PER_S)
     n = max(1, int(seconds * fps))
     for i in range(1, n + 1):
         a = i / n
@@ -94,7 +107,7 @@ def play(robot: SO101Follower, skill: dict, speed: float = 1.0, should_stop=lamb
     keys, frames, fps = skill["keys"], skill["frames"], skill["fps"]
     speed = min(speed, 1.0)                       # never faster than it was recorded
     first = dict(zip(keys, frames[0]))
-    move_to(robot, first, seconds=1.5)            # glide to the start pose first
+    move_to(robot, first)                         # glide to the start pose first (distance-scaled)
     dt = 1 / (fps * speed)
     t0 = time.perf_counter()
     for i, row in enumerate(frames):
