@@ -89,6 +89,9 @@ python wristrec.py hover1                         # teleop with the leader: driv
 python wristrec.py screw1 --skill screwdriver --hold-at-hover   # replay up to 2 s before the grasp, hold there, c continues
 ```
 
+A skill can store its hold point as `"hover_frame": N` in its JSON (screwdriver4 has 141: whole tool in view,
+room to slide it under the open jaws). Then `--hold-at-hover` stops there instead of guessing 2 s before the grasp; `--hover-frame N` overrides both.
+
 - `j` (only while holding) nudges pan, lift, elbow and wrist_flex ±3° and saves one settled frame per
   position, tagged `jog/<joint>/<±deg>`. Those frames give the pixels-per-degree table.
 - Scope (decided 2026-10-03): the alignment corrects the tool's **position only** (left/right, closer/further).

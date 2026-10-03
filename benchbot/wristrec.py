@@ -45,6 +45,7 @@ class Camera:
     """Newest frame, its capture time and a counter, from a background thread."""
 
     def __init__(self, index: int, width: int, height: int):
+        self.index = index
         self.cap = cv2.VideoCapture(index)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -67,7 +68,8 @@ class Camera:
         while self.frame is None and time.perf_counter() - t < timeout:
             time.sleep(0.02)
         if self.frame is None:
-            raise RuntimeError("camera returned no frame")
+            raise RuntimeError(f"camera {self.index} opened but sent no frames: replug its USB "
+                               f"(if the index changes, find it with --probe)")
         with self._lock:
             return self.frame, self.t, self.seq
 
@@ -182,7 +184,8 @@ def main():
     ap.add_argument("--hold-at-hover", action="store_true", help="stop the skill at the hover frame")
     ap.add_argument("--hover-lead", type=float, default=2.0,
                     help="hover = this many seconds before the grasp; high enough to slide the tool around under the open jaws")
-    ap.add_argument("--hover-frame", type=int, help="hover frame index, overrides the automatic one")
+    ap.add_argument("--hover-frame", type=int, help="hover frame index; overrides the skill's stored hover_frame "
+                                                    "and the automatic one")
     ap.add_argument("--jog-step", type=float, default=3.0, help="degrees per jog")
     args = ap.parse_args()
 
@@ -199,6 +202,9 @@ def main():
         skill = arm.load_skill(args.skill)
         if args.hover_frame is not None:
             hover = args.hover_frame
+        elif "hover_frame" in skill:
+            hover = skill["hover_frame"]
+            print(f"hover = frame {hover} (stored in the skill)")
         elif args.hold_at_hover:
             grasp, hover = find_hover(skill, args.hover_lead)
             print(f"grasp starts at frame {grasp} ({grasp / skill['fps']:.1f}s), hover = frame {hover}")

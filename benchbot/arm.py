@@ -5,7 +5,8 @@ Trajectory file = JSON:
   "name": "screwdriver",
   "fps": 30,
   "keys": ["shoulder_pan.pos", ...],
-  "frames": [[v0, v1, ...], ...]      # one row per tick, same order as keys
+  "frames": [[v0, v1, ...], ...],     # one row per tick, same order as keys
+  "hover_frame": 159                  # optional: where the wrist camera lines up on the tool
 }
 
 Arms are found by their controller board's USB serial (arms.json), so ports and calibration ids
