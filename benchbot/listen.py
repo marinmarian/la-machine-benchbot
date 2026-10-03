@@ -134,6 +134,7 @@ def main():
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--meter", action="store_true", help="print live mic RMS for 8 s and exit")
     ap.add_argument("--no-vision", action="store_true", help="skip the camera slot check before skills")
+    ap.add_argument("--show", action="store_true", help="keep a live camera window with slot boxes open")
     args = ap.parse_args()
     if args.meter:
         return meter()
@@ -148,6 +149,8 @@ def main():
         print(f"vision: on ({len(vision.load_config()['slots'])} slots checked before skills)")
     else:
         print("vision: off" + ("" if args.no_vision else "  (python vision.py setup / capture to enable)"))
+
+    cam = vision.LiveCamera(vision.load_config()) if (use_vision and args.show) else None
 
     robot = None if args.dry_run else arm.connect_follower()
     stop_flag = threading.Event()
@@ -168,7 +171,7 @@ def main():
                     print(f"  skill '{s}' not recorded yet (python record.py {s})")
                     break
                 if use_vision:
-                    ok, why = vision.requirement_ok(s)
+                    ok, why = vision.requirement_ok(s, frame=cam.latest() if cam else None)
                     if not ok:
                         speak(f"Sorry, {why}.")
                         break
@@ -197,17 +200,26 @@ def main():
             dispatch(line)
     threading.Thread(target=keyboard, daemon=True).start()
 
-    print("Listening. Speak, or type a command + Enter. Ctrl-C to quit.")
-    try:
+    def listen_loop():
         for audio in utterances(energy_thresh=args.energy):
             segments, _ = model.transcribe(audio, language="en", beam_size=1,
                                            vad_filter=True, without_timestamps=True)
             text = " ".join(s.text for s in segments).strip()
             if text:
                 dispatch(text)
+
+    print("Listening. Speak, or type a command + Enter. Ctrl-C to quit." + ("  (q in the camera window also quits)" if cam else ""))
+    try:
+        if cam:
+            threading.Thread(target=listen_loop, daemon=True).start()
+            vision.watch(cam, vision.load_config())      # window must run on the main thread (macOS)
+        else:
+            listen_loop()
     except KeyboardInterrupt:
         pass
     finally:
+        if cam:
+            cam.close()
         if robot is not None:
             arm.disconnect(robot)
 

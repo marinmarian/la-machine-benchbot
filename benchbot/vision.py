@@ -7,6 +7,7 @@ Setup (camera fixed, all tools in their slots):
     python vision.py check            # present / absent per slot (add a slot name for one)
     python vision.py check --show     # same, plus a window with the boxes drawn on the live frame
     python vision.py check --image f  # same, on a saved frame (no camera)
+    python vision.py watch            # live window: every slot boxed + labelled, green/red, q to quit
 
 How it works: each slot ROI is cropped from the live frame and from both reference
 photos, downscaled to 32x32 grey and normalised (so room brightness changes cancel).
@@ -21,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -71,6 +73,39 @@ def grab_frame(cfg: dict, flush: int = 10) -> np.ndarray:
     return frame
 
 
+class LiveCamera:
+    """Background thread that keeps the newest frame. Use when a window stays open, so
+    the check and the display share one camera handle instead of reopening it."""
+
+    def __init__(self, cfg: dict):
+        self.cfg, self.frame, self._stop = cfg, None, threading.Event()
+        self.cap = cv2.VideoCapture(cfg.get("camera_index", 0))
+        if "width" in cfg:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg["width"])
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg["height"])
+        if not self.cap.isOpened():
+            raise RuntimeError(f"cannot open camera {cfg.get('camera_index', 0)}")
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        while not self._stop.is_set():
+            ok, f = self.cap.read()
+            if ok:
+                self.frame = f
+        self.cap.release()
+
+    def latest(self, timeout: float = 3.0) -> np.ndarray:
+        t = time.perf_counter()
+        while self.frame is None and time.perf_counter() - t < timeout:
+            time.sleep(0.02)
+        if self.frame is None:
+            raise RuntimeError("camera returned no frame")
+        return self.frame
+
+    def close(self):
+        self._stop.set()
+
+
 # ---------- the check ----------
 
 def _signature(frame: np.ndarray, roi: list[int]) -> np.ndarray:
@@ -109,7 +144,7 @@ def requirement(skill: str, cfg: dict) -> dict[str, str]:
     return req or {}
 
 
-def requirement_ok(skill: str, image: str | None = None) -> tuple[bool, str]:
+def requirement_ok(skill: str, image: str | None = None, frame: np.ndarray | None = None) -> tuple[bool, str]:
     """(ok, reason). ok=True when nothing is required or everything required holds."""
     cfg = load_config()
     if cfg is None:
@@ -117,7 +152,8 @@ def requirement_ok(skill: str, image: str | None = None) -> tuple[bool, str]:
     req = requirement(skill, cfg)
     if not req:
         return True, ""
-    frame = cv2.imread(image) if image else grab_frame(cfg)
+    if frame is None:
+        frame = cv2.imread(image) if image else grab_frame(cfg)
     state = check_frame(frame, cfg)
     for slot, want in req.items():
         present, margin = state[slot]
@@ -177,6 +213,29 @@ def cmd_capture(args):
     print(f"saved {REFS[args.which]}  ({frame.shape[1]}x{frame.shape[0]})")
 
 
+def watch(cam: LiveCamera, cfg: dict, window: str = "benchbot camera (q to quit)", stop: threading.Event | None = None) -> None:
+    """Show the live frame with every slot boxed and labelled until q is pressed or `stop` is set."""
+    refs = {k: cv2.imread(str(p)) for k, p in REFS.items()}
+    while not (stop and stop.is_set()):
+        frame = cam.latest()
+        state = check_frame(frame, cfg, refs)
+        cv2.imshow(window, _with_boxes(frame, cfg, state))
+        if cv2.waitKey(30) & 0xFF == ord("q"):
+            break
+    cv2.destroyAllWindows()
+
+
+def cmd_watch(args):
+    cfg = load_config()
+    if cfg is None or not available():
+        sys.exit("run setup and capture empty first")
+    cam = LiveCamera(cfg)
+    try:
+        watch(cam, cfg)
+    finally:
+        cam.close()
+
+
 def cmd_check(args):
     cfg = load_config()
     if cfg is None:
@@ -200,6 +259,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("setup"); s.add_argument("--camera", type=int, default=0); s.set_defaults(fn=cmd_setup)
     c = sub.add_parser("capture"); c.add_argument("which", choices=list(REFS)); c.set_defaults(fn=cmd_capture)
+    w = sub.add_parser("watch"); w.set_defaults(fn=cmd_watch)
     k = sub.add_parser("check"); k.add_argument("slot", nargs="?"); k.add_argument("--image"); k.add_argument("--show", action="store_true"); k.set_defaults(fn=cmd_check)
     args = ap.parse_args()
     args.fn(args)
