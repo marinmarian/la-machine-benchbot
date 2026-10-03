@@ -42,6 +42,21 @@ SKILLS_DIR = Path(__file__).parent / "skills"
 SKILLS_DIR.mkdir(exist_ok=True)
 
 
+def _connect_with_file_calibration(device) -> None:
+    """connect() without the interactive calibration prompt.
+
+    If the motors' stored offsets/limits differ from the calibration file, write the
+    file values to the motors (what pressing Enter at lerobot's prompt does). Never
+    starts a new calibration: that needs a human and lerobot-calibrate.
+    """
+    if not device.calibration:
+        raise RuntimeError(f"No calibration file for id {device.id!r}; run lerobot-calibrate first.")
+    device.connect(calibrate=False)
+    if not device.is_calibrated:
+        print(f"{device.id}: motor calibration differs from file, writing file values to motors")
+        device.bus.write_calibration(device.calibration)
+
+
 def connect_follower(max_relative_target: float | None = None) -> SO101Follower:
     # max_relative_target caps how far a single command may move a joint, in degrees
     # (lerobot default use_degrees=True; gripper is 0..100). Safety net if a file is corrupt.
@@ -49,13 +64,13 @@ def connect_follower(max_relative_target: float | None = None) -> SO101Follower:
                               max_relative_target=max_relative_target,
                               disable_torque_on_disconnect=DISABLE_TORQUE_ON_DISCONNECT)
     robot = SO101Follower(cfg)
-    robot.connect()
+    _connect_with_file_calibration(robot)
     return robot
 
 
 def connect_leader() -> SO101Leader:
     teleop = SO101Leader(SO101LeaderConfig(port=LEADER_PORT, id=LEADER_ID))
-    teleop.connect()
+    _connect_with_file_calibration(teleop)
     return teleop
 
 
