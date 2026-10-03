@@ -1,8 +1,8 @@
 """Offline voice loop: mic -> faster-whisper -> fuzzy match -> replay skill.
 
-    uv run listen.py                      # voice + typed commands
-    uv run listen.py --model small.en     # better accuracy, slower
-    uv run listen.py --dry-run            # no robot, just prints what it would do
+    python listen.py                      # voice + typed commands
+    python listen.py --model small.en     # better accuracy, slower
+    python listen.py --dry-run            # no robot, just prints what it would do
 
 Say e.g. "give me the screwdriver", "hand me the tweezers", "clean up", "stop".
 You can also just TYPE the command and press Enter (demo plan B).

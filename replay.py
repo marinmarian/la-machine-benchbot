@@ -1,8 +1,8 @@
 """Replay a recorded skill (no voice). Good for testing each recording.
 
-    uv run replay.py screwdriver
-    uv run replay.py screwdriver --speed 0.7
-    uv run replay.py --list
+    python replay.py screwdriver
+    python replay.py screwdriver --speed 0.7
+    python replay.py --list
 """
 import argparse
 

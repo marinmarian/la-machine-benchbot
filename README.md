@@ -2,17 +2,28 @@
 
 Record a motion once with the leader arm, replay it by name with your voice. Fully offline.
 
-## Setup (do this while you still have mobile data — whisper model downloads once)
+## Setup (done 2026-10-03 on Marin's Mac — kept here for reference)
+
+lerobot 0.5.1 is installed editable from `~/Work/lerobot` in the `lerobot` conda env
+(Python 3.12, torch 2.10). The speech deps were added into that same env with uv so
+nothing heavy had to be re-downloaded:
 
 ```bash
-cd benchbot
-uv venv && source .venv/bin/activate
-uv pip install -e .            # or: uv pip install -e "/path/to/lerobot[feetech]" then uv pip install faster-whisper sounddevice rapidfuzz numpy
-lerobot-find-port              # run twice, once per arm
-export FOLLOWER_PORT=/dev/tty.usbmodemXXXX LEADER_PORT=/dev/tty.usbmodemYYYY
-export FOLLOWER_ID=<id you used in lerobot-calibrate> LEADER_ID=<same for leader>
-python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', compute_type='int8')"   # pre-download
+conda activate lerobot
+uv pip install --python "$(which python)" faster-whisper sounddevice rapidfuzz
+python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', compute_type='int8')"   # pre-download, verified with HF_HUB_OFFLINE=1
 ```
+
+Ports and calibration ids live in `.env` (loaded by `arm.py`; shell env vars override).
+After plugging both arms in, confirm with `ls /dev/tty.usbmodem*`. If the names changed, edit `.env`.
+Calibration files: `~/.cache/huggingface/lerobot/calibration/robots/so_follower/follower_so101.json`
+and `.../teleoperators/so_leader/leader_so101.json`.
+
+Run scripts with the env active: `python record.py home`, `python replay.py home`, `python listen.py`.
+(`uv run` is not used: the pyproject's `lerobot[feetech]` line would pull a second lerobot + torch from PyPI.)
+
+Note: `connect()` compares the motors' stored calibration with the file and, on mismatch, drops into
+the interactive `lerobot-calibrate` prompt. If a script seems to hang right after connecting, look for that prompt.
 
 macOS: give the terminal microphone permission the first time `listen.py` runs.
 
@@ -20,14 +31,14 @@ macOS: give the terminal microphone permission the first time `listen.py` runs.
 
 1. **Record** each skill. Start AND end in the same parked "home" pose.
    ```bash
-   uv run record.py home          # a tiny clip that just sits in the parked pose
-   uv run record.py screwdriver   # home -> grab screwdriver from slot -> hold out -> release -> home
-   uv run record.py return_tool
-   uv run record.py cleanup
+   python record.py home          # a tiny clip that just sits in the parked pose
+   python record.py screwdriver   # home -> grab screwdriver from slot -> hold out -> release -> home
+   python record.py return_tool
+   python record.py cleanup
    ```
-2. **Test** each one: `uv run replay.py screwdriver` (use `--speed 0.7` if it's jerky).
+2. **Test** each one: `python replay.py screwdriver` (use `--speed 0.7` if it's jerky; speed is capped at 1.0).
 3. **Edit** `commands.json` for the phrases you'll actually say.
-4. **Run** the demo: `uv run listen.py` (first check `uv run listen.py --dry-run`).
+4. **Run** the demo: `python listen.py` (first check `python listen.py --dry-run`).
 
 ## Demo-day tips
 
@@ -37,7 +48,7 @@ macOS: give the terminal microphone permission the first time `listen.py` runs.
 - Noisy room: run with `--energy 0.02` or `0.03`, and hold the laptop mic close. Typing the command is an acceptable plan B — the judges care about the arm, not the mic.
 - `--model small.en` if `base.en` mishears tool names; add misheard variants to `commands.json` instead of fighting the model (e.g. `"screw driver"`, `"screwdrivers"`).
 
-## If the lerobot import path differs
+## If the lerobot import path differs (already fixed for 0.5.x: `lerobot.robots.so_follower`, `lerobot.teleoperators.so_leader`)
 
 Your installed version may use different module paths. Check with:
 ```bash

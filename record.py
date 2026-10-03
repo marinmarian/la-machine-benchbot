@@ -1,7 +1,7 @@
 """Record one skill by teleoperating with the leader arm.
 
-    uv run record.py screwdriver            # press Enter to start, Enter again to stop
-    uv run record.py home --fps 30
+    python record.py screwdriver            # press Enter to start, Enter again to stop
+    python record.py home --fps 30
 
 Tip: start and end every skill in the SAME "home" pose (arm parked above the bench).
 Then any skill can follow any other skill without a surprise jump.
