@@ -29,6 +29,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import detector
+
 HERE = Path(__file__).parent
 SLOTS_FILE = HERE / "slots.json"
 REF_DIR = HERE / "vision"
@@ -45,8 +47,20 @@ def load_config() -> dict | None:
 
 
 def available() -> bool:
-    """True when slots.json and both reference photos exist."""
-    return load_config() is not None and all(p.exists() for p in REFS.values())
+    """True when a trained detector exists, or slots.json plus both reference photos do."""
+    return detector.available() or (load_config() is not None and all(p.exists() for p in REFS.values()))
+
+
+def backend() -> str:
+    return "detector" if detector.available() else "slots"
+
+
+def names() -> list[str]:
+    """Things we can check for: detector classes, or slot names."""
+    if detector.available():
+        return list(detector._load().names.values())
+    cfg = load_config()
+    return list(cfg["slots"]) if cfg else []
 
 
 # ---------- camera ----------
@@ -115,8 +129,16 @@ def _signature(frame: np.ndarray, roi: list[int]) -> np.ndarray:
     return (small - small.mean()) / (small.std() + 1e-6)
 
 
-def check_frame(frame: np.ndarray, cfg: dict, refs: dict[str, np.ndarray] | None = None) -> dict[str, tuple[bool, float]]:
-    """slot -> (present, margin). margin > 0 means closer to the 'full' reference."""
+def check_frame(frame: np.ndarray, cfg: dict | None, refs: dict[str, np.ndarray] | None = None) -> dict[str, tuple[bool, float]]:
+    """name -> (present, margin). Detector: margin = best confidence * 100 (>= 50 counts).
+    Slots: margin > 0 means closer to the 'full' reference."""
+    if detector.available():
+        dets = detector.detect(frame, conf=0.05)
+        out = {}
+        for n in names():
+            best = max((c for cls, c, _ in dets if cls == n), default=0.0)
+            out[n] = (best >= detector.CONF, best * 100)
+        return out
     refs = refs or {k: cv2.imread(str(p)) for k, p in REFS.items()}
     out = {}
     for slot, roi in cfg["slots"].items():
@@ -129,17 +151,18 @@ def check_frame(frame: np.ndarray, cfg: dict, refs: dict[str, np.ndarray] | None
 
 def check(slot: str | None = None, image: str | None = None) -> dict[str, tuple[bool, float]]:
     cfg = load_config()
-    if cfg is None:
+    if cfg is None and not detector.available():
         raise RuntimeError("no slots.json; run: python vision.py setup")
+    cfg = cfg or {}
     frame = cv2.imread(image) if image else grab_frame(cfg)
     result = check_frame(frame, cfg)
     return {slot: result[slot]} if slot else result
 
 
-def requirement(skill: str, cfg: dict) -> dict[str, str]:
-    """slot -> 'present'|'empty' that `skill` needs. Defaults to its namesake slot being present."""
-    req = cfg.get("requires", {}).get(skill)
-    if req is None and skill in cfg["slots"]:
+def requirement(skill: str, cfg: dict | None) -> dict[str, str]:
+    """name -> 'present'|'empty' that `skill` needs. Defaults to its namesake tool being present."""
+    req = (cfg or {}).get("requires", {}).get(skill)
+    if req is None and skill in names():
         req = {skill: "present"}
     return req or {}
 
@@ -147,20 +170,22 @@ def requirement(skill: str, cfg: dict) -> dict[str, str]:
 def requirement_ok(skill: str, image: str | None = None, frame: np.ndarray | None = None) -> tuple[bool, str]:
     """(ok, reason). ok=True when nothing is required or everything required holds."""
     cfg = load_config()
-    if cfg is None:
+    if not available():
         return True, ""
     req = requirement(skill, cfg)
     if not req:
         return True, ""
     if frame is None:
-        frame = cv2.imread(image) if image else grab_frame(cfg)
+        frame = cv2.imread(image) if image else grab_frame(cfg or {})
     state = check_frame(frame, cfg)
-    for slot, want in req.items():
-        present, margin = state[slot]
+    det = detector.available()
+    for name, want in req.items():
+        present, margin = state[name]
+        nice = name.replace("_", " ")
         if want == "present" and not present:
-            return False, f"there is nothing in the {slot.replace('_', ' ')} slot"
+            return False, (f"I don't see the {nice} on the bench" if det else f"there is nothing in the {nice} slot")
         if want == "empty" and present:
-            return False, f"the {slot.replace('_', ' ')} slot is not empty"
+            return False, (f"the {nice} is still on the bench" if det else f"the {nice} slot is not empty")
     return True, ""
 
 
@@ -189,8 +214,11 @@ def cmd_setup(args):
     print("next: remove every tool, do NOT move the camera, then:  python vision.py capture empty")
 
 
-def _with_boxes(frame: np.ndarray, cfg: dict, state: dict | None = None) -> np.ndarray:
-    """Copy of frame with slot boxes (green = present, red = absent, white = unknown) and labels."""
+def _with_boxes(frame: np.ndarray, cfg: dict | None, state: dict | None = None) -> np.ndarray:
+    """Copy of frame with boxes and labels: detector boxes when a model exists, else slot boxes
+    (green = present, red = absent, white = unknown)."""
+    if detector.available():
+        return detector.draw(frame)
     out = frame.copy()
     for slot, (x, y, w, h) in cfg["slots"].items():
         color, tag = (255, 255, 255), slot
@@ -215,7 +243,7 @@ def cmd_capture(args):
 
 def watch(cam: LiveCamera, cfg: dict, window: str = "benchbot camera (q to quit)", stop: threading.Event | None = None) -> None:
     """Show the live frame with every slot boxed and labelled until q is pressed or `stop` is set."""
-    refs = {k: cv2.imread(str(p)) for k, p in REFS.items()}
+    refs = None if detector.available() else {k: cv2.imread(str(p)) for k, p in REFS.items()}
     while not (stop and stop.is_set()):
         frame = cam.latest()
         state = check_frame(frame, cfg, refs)
@@ -227,9 +255,10 @@ def watch(cam: LiveCamera, cfg: dict, window: str = "benchbot camera (q to quit)
 
 def cmd_watch(args):
     cfg = load_config()
-    if cfg is None or not available():
-        sys.exit("run setup and capture empty first")
-    cam = LiveCamera(cfg)
+    if not available():
+        sys.exit("no detector (collect.py + train.py) and no slots (setup + capture empty)")
+    print(f"backend: {backend()}  classes: {names()}")
+    cam = LiveCamera(cfg or {"camera_index": 0})
     try:
         watch(cam, cfg)
     finally:
@@ -238,16 +267,17 @@ def cmd_watch(args):
 
 def cmd_check(args):
     cfg = load_config()
-    if cfg is None:
-        sys.exit("no slots.json; run: python vision.py setup")
+    if not available():
+        sys.exit("no detector (collect.py + train.py) and no slots (setup + capture empty)")
+    print(f"backend: {backend()}")
     t = time.perf_counter()
-    frame = cv2.imread(args.image) if args.image else grab_frame(cfg)
+    frame = cv2.imread(args.image) if args.image else grab_frame(cfg or {})
     state = check_frame(frame, cfg)
     if args.slot:
         state = {args.slot: state[args.slot]}
     for slot, (present, margin) in state.items():
         print(f"  {slot:14s} {'PRESENT' if present else 'absent ':8s} margin {margin:+.1f}")
-    print(f"  ({time.perf_counter() - t:.2f}s)   |margin| < 10 is unreliable: tighten that box or re-capture")
+    print(f"  ({time.perf_counter() - t:.2f}s)" + ("" if detector.available() else "   |margin| < 10 is unreliable: tighten that box or re-capture"))
     if args.show:
         cv2.imshow("slots (any key to close)", _with_boxes(frame, cfg, state))
         cv2.waitKey(0)

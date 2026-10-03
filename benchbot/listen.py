@@ -146,11 +146,11 @@ def main():
 
     use_vision = vision.available() and not args.no_vision
     if use_vision:
-        print(f"vision: on ({len(vision.load_config()['slots'])} slots checked before skills)")
+        print(f"vision: on, backend {vision.backend()}, checks {vision.names()} before skills")
     else:
-        print("vision: off" + ("" if args.no_vision else "  (python vision.py setup / capture to enable)"))
+        print("vision: off" + ("" if args.no_vision else "  (collect.py + train.py for a detector, or vision.py setup for slots)"))
 
-    cam = vision.LiveCamera(vision.load_config()) if (use_vision and args.show) else None
+    cam = vision.LiveCamera(vision.load_config() or {"camera_index": 0}) if (use_vision and args.show) else None
 
     robot = None if args.dry_run else arm.connect_follower()
     stop_flag = threading.Event()
@@ -212,7 +212,7 @@ def main():
     try:
         if cam:
             threading.Thread(target=listen_loop, daemon=True).start()
-            vision.watch(cam, vision.load_config())      # window must run on the main thread (macOS)
+            vision.watch(cam, vision.load_config() or {})  # window must run on the main thread (macOS)
         else:
             listen_loop()
     except KeyboardInterrupt:
