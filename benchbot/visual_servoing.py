@@ -55,18 +55,22 @@ def fit_table(session: str, prompt: str, kin: Kinematics) -> tuple[np.ndarray, d
     rows = [json.loads(l) for l in open(root / "samples.jsonl")]
     jog = [r for r in rows if (r["tag"] or "").startswith("jog/") and r["tag"] != "jog/base"]
     sam3 = samseg.load_sam3()
-    by = {}                                               # joint -> sign -> [(centroid, q)]
+    by = {j: [] for j in SOLVE}                          # joint -> [(i, sign, centroid, q)] in recording order
     for r in jog:
         _, j, step = r["tag"].split("/")
-        res = samseg.find_text_mask(sam3, cv2.imread(str(root / r["file"])), prompt)
+        frame = cv2.imread(str(root / r["file"]))
+        # a settled frame we picked ourselves: a weaker detection is still the object
+        res = samseg.find_text_mask(sam3, frame, prompt) or samseg.find_text_mask(sam3, frame, prompt, threshold=0.3)
         if res is None:
             print(f"  frame {r['i']} {r['tag']}: no '{prompt}' found, skipped")
             continue
-        by.setdefault(j, {}).setdefault(step[0], []).append((samseg.mask_centroid(res[0]), r["q"]))
+        by[j].append((r["i"], step[0], samseg.mask_centroid(res[0]), r["q"]))
     T0 = None
     stats = {}
     for j in SOLVE:
-        pairs = list(zip(by[j]["+"], by[j]["-"]))
+        # each jog run saves +step then -step; pair them within a run (the tool may move between runs)
+        seq = sorted(by[j], key=lambda x: x[0])
+        pairs = [((a[2], a[3]), (b[2], b[3])) for a, b in zip(seq, seq[1:]) if (a[1], b[1]) == ("+", "-")]
         if not pairs:
             raise RuntimeError(f"no usable +/- jog pair for {j}")
         if T0 is None:
