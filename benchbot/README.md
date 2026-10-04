@@ -87,10 +87,10 @@ needs is not on the bench ("Sorry, I don't see the screwdriver on the bench"). Z
 failed on these objects, so we train a small YOLO on auto-labelled frames. Budget ~1 h.
 
 ```bash
-# camera fixed in its final spot, arm parked OUT of view, bench empty
-python collect.py --background                 # saves vision/empty.jpg + empty frames
-# park the arm IN view, bench still empty, run it again (teaches "arm is not a tool")
-python collect.py --background
+# camera fixed in its final spot, arms parked OUT of view, bench empty
+python collect.py --background                 # (re)writes vision/empty.jpg + empty frames
+# park the arms IN view, bench still empty (teaches "arms are not tools")
+python collect.py --background --keep-empty
 # one object at a time, fully inside the frame; move + rotate it around the bench for 45 s
 python collect.py screwdriver
 python collect.py microphone                   # class name = skill name
