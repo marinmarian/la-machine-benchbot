@@ -92,8 +92,11 @@ python wristrec.py screw1 --skill screwdriver --hold-at-hover   # replay up to 2
 A skill can store its hold point as `"hover_frame": N` in its JSON (screwdriver4 has 141: whole tool in view,
 room to slide it under the open jaws; black_motor2 has 219, its pause about 6 cm above where the jaws close). Then `--hold-at-hover` stops there instead of guessing 2 s before the grasp; `--hover-frame N` overrides both.
 
-- `j` (only while holding) nudges pan, lift, elbow and wrist_flex ±3° and saves one settled frame per
-  position, tagged `jog/<joint>/<±deg>`. Those frames give the pixels-per-degree table.
+- `k` (only while holding) slides the gripper ±30 mm (`--slide-mm`) in base x and y at the same height, the way
+  the line-up moves, and saves one settled frame per position, tagged `slide/<x|y>/<±mm>`. Those frames give the
+  pixels-per-mm table directly. Press it twice for two runs.
+- `j` (only while holding) nudges pan, lift, elbow and wrist_flex ±3° instead (`jog/<joint>/<±deg>`). The table can
+  be fitted from these too, but it has to separate sliding from tilting and only covers small moves.
 - Scope (decided 2026-10-03): the alignment corrects the tool's **position only** (left/right, closer/further).
   Tool **rotation is out of scope**: it would mean also turning `wrist_roll` and solving for orientation,
   which is much harder. The tool still has to lie at roughly the angle it had when the skill was recorded.
@@ -126,7 +129,7 @@ gripper steps sideways at the same height until the tool sits where it sat in th
 grasp plays shifted by that offset, which eases back to the recorded path during the lift.
 
 ```bash
-python visual_servoing.py screwdriver4 --fit-table screw4_2   # done: pixels per mm at the hover, from wristrec's jog frames
+python visual_servoing.py screwdriver4 --fit-table screw4_2   # pixels per mm at the hover, from wristrec's k (or j) frames
 python visual_servoing.py screwdriver4 --set-target           # tool exactly where the recording grasps it: save where it looks
 python visual_servoing.py screwdriver4 --align-only --show    # move the tool, check it lines up (stops at the hover)
 python visual_servoing.py screwdriver4 --show                 # line up + grasp
@@ -134,8 +137,16 @@ python visual_servoing.py screwdriver4 --show                 # line up + grasp
 
 - Skill keys: `hover_frame`, `rejoin` [c, e] (full offset until frame c, back on the recording by e;
   screwdriver4: 250, 282; black_motor2: 338, 370, the start of the lift), `hover_px_per_mm`, `hover_target`, optional `prompt`.
-- Reach: any direction up to 3 cm, 4 cm except straight outward. Beyond `--max-offset` (40 mm) it stops at the hover.
+- Reach: before every correction step the whole offset grasp is computed (about 60 ms); if any frame is out of reach,
+  it stops. From black_motor2's hover that is 5.5 cm straight out (wrist_flex at its model limit),
+  12 cm toward the base and 9.5-15 cm sideways.
+  It also stops beyond `--max-offset` (100 mm) or when the error grows twice in a row (wrong object or bad table).
+- On any stop after reaching the hover it goes home: back to the recorded hover, then the approach in reverse.
+  Ctrl-C never moves the arm.
 - The joints sag (a commanded 3° jog moves about 1°), so one big move is never trusted: each step is measured again.
+- The table is linear but the view isn't: sliding sideways turns the camera with pan, so px/mm falls from 3.4 at 3 cm
+  to 2.8 at 9 cm, and the joints' backlash moves the settled pose ~4.5 mm with the approach direction. black_motor2
+  keeps the 3 cm table (exact near the target; far away its steps fall short, which only costs an extra step).
   About 2.3 s for the first detection on the Mac GPU, then about 0.4 s per tracked frame.
 - Moving sideways also turns the gripper a little, because pan is the only joint that can do it. The IK target
   (`Kinematics.target` in `adjust.py`) includes that turn.

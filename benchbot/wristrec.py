@@ -9,11 +9,13 @@ Keys (camera window focused):
     r  start/stop continuous recording       s  save one snapshot
     h  hold the follower where it is / resume (teleop: glides back to the leader; skill: pauses)
     j  jog probe from the held pose: pan, lift, elbow, wrist_flex +-step, one settled frame per position
+    k  slide probe from the held pose: gripper +-30/45/60/90 mm (--slide-mm) in base x and y at the same
+       height (the way the line-up moves), one settled frame per position; --fit-table prefers these
     c  continue the skill from where it stopped (--skill)
     q  quit
 
 Typical session: drive to a hover pose above the bench, h to hold (hands are free now), move the
-tool around under the camera with s / r, then j once for the table. A skill run with
+tool around under the camera with s / r, then k once for the table (j for the older per-joint one). A skill run with
 --hold-at-hover stops at the same pose the grasp will start from.
 
 Output: wrist_data/<session>/frames/*.jpg, samples.jsonl (one row per frame: t, file, mode, tag,
@@ -38,7 +40,7 @@ import arm
 OUT = Path(__file__).parent / "wrist_data"
 # No wrist_roll: alignment corrects position only, tool rotation is out of scope (README).
 JOG_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"]
-HELP = "r rec  s snap  h hold  j jog  c continue  q quit"
+HELP = "r rec  s snap  h hold  j jog  k slide  c continue  q quit"
 
 
 class Camera:
@@ -171,6 +173,33 @@ def jog_segments(base: dict, step: float) -> list[dict]:
     return segs
 
 
+def slide_segments(base: dict, distances: list[float]) -> list[dict]:
+    """Gripper +d and -d mm in base x, then y, for each distance, at the held pose's height and tilt:
+    the same inverse kinematics the line-up uses (adjust.Kinematics.target), back to the held pose
+    after each one, holding still before every tagged frame. Targets out of reach are skipped."""
+    from adjust import MAX_RESIDUAL_M, SOLVE, Kinematics
+    kin = Kinematics()
+    roll = base["wrist_roll.pos"]
+    q0 = np.array([base[f"{j}.pos"] for j in SOLVE])
+    T0 = kin.fk(q0, roll)
+    segs = [{"target": base, "seconds": 0.5, "tag": "slide/base"}]
+    for axis, unit in (("x", (1, 0, 0)), ("y", (0, 1, 0))):
+        for mm in distances:
+            for d in (mm, -mm):
+                T = kin.target(T0, np.array(unit) * d / 1000)
+                q = kin.ik(q0, roll, T)
+                if np.linalg.norm(kin.fk(q, roll)[:3, 3] - T[:3, 3]) > MAX_RESIDUAL_M:
+                    print(f"slide {axis} {d:+g} mm: out of reach, skipped")
+                    continue
+                tgt = {**base, **{f"{j}.pos": float(v) for j, v in zip(SOLVE, q)}}
+                secs = max(1.0, float(np.abs(q - q0).max()) / arm.GLIDE_DEG_PER_S)
+                segs += [{"target": tgt, "seconds": secs},
+                         {"target": tgt, "seconds": 0.6, "tag": f"slide/{axis}/{d:+g}"},
+                         {"target": base, "seconds": secs}]
+    segs.append({"target": base, "seconds": 0.5, "tag": "slide/base"})
+    return segs
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("session", nargs="?")
@@ -187,6 +216,8 @@ def main():
     ap.add_argument("--hover-frame", type=int, help="hover frame index; overrides the skill's stored hover_frame "
                                                     "and the automatic one")
     ap.add_argument("--jog-step", type=float, default=3.0, help="degrees per jog")
+    ap.add_argument("--slide-mm", default="30,45,60,90",
+                    help="slide distances in mm for k, comma-separated (out-of-reach ones are skipped)")
     args = ap.parse_args()
 
     if args.probe:
@@ -219,7 +250,7 @@ def main():
     writer = Writer(root)
     meta = {"session": args.session, "created": datetime.now().isoformat(timespec="seconds"),
             "camera": int(args.camera), "resolution": [w, h], "fps": fps, "follower_id": robot.id,
-            "skill": args.skill, "hover_frame": hover, "jog_step": args.jog_step}
+            "skill": args.skill, "hover_frame": hover, "jog_step": args.jog_step, "slide_mm": [float(x) for x in args.slide_mm.split(",")]}
     (root / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"camera {args.camera} at {w}x{h}, saving to {root}")
 
@@ -311,6 +342,9 @@ def main():
                 mode, next_mode = "moving", "skill"
             elif key == ord("j") and mode == "hold" and not motion:
                 motion += jog_segments(cmd, args.jog_step)
+                mode, next_mode = "jog", "hold"
+            elif key == ord("k") and mode == "hold" and not motion:
+                motion += slide_segments(cmd, [float(x) for x in args.slide_mm.split(",")])
                 mode, next_mode = "jog", "hold"
 
             tick += 1

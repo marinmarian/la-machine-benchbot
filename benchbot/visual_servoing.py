@@ -1,6 +1,6 @@
 """Line the gripper up on the tool with the wrist camera, then grasp with the recorded skill.
 
-    python visual_servoing.py screwdriver4 --fit-table screw4_2   # once: pixels-per-mm at the hover, from a wristrec jog session
+    python visual_servoing.py screwdriver4 --fit-table screw4_2   # once: pixels-per-mm at the hover, from a wristrec session (k or j probe)
     python visual_servoing.py screwdriver4 --set-target           # once: tool where the recording grasps it -> remember where it looks
     python visual_servoing.py screwdriver4 --align-only --show    # play to the hover, line up, stop there (arm keeps holding)
     python visual_servoing.py screwdriver4 --show                 # the whole thing
@@ -99,6 +99,80 @@ def fit_table(session: str, prompt: str, kin: Kinematics) -> tuple[np.ndarray, d
     return B, {"radial": radial.tolist(), "side": side.tolist(), "cond": float(np.linalg.cond(A))}
 
 
+def wait_still(robot, max_s: float = 0.8, tol: float = 0.2, dt: float = 0.05) -> None:
+    """Return once no arm joint moves more than `tol` degrees in `dt`, or after `max_s`.
+
+    A hover inside a pause in the recording is already still on arrival (black_motor2), so this
+    returns at once; a hover mid-motion (screwdriver4) waits for the arm to stop.
+    """
+    t0 = time.perf_counter()
+    prev = arm.current_pose(robot)
+    while time.perf_counter() - t0 < max_s:
+        time.sleep(dt)
+        cur = arm.current_pose(robot)
+        if max(abs(cur[k] - prev[k]) for k in cur if not k.startswith("gripper")) < tol:
+            return
+        prev = cur
+
+
+def fit_slide_table(session: str, prompt: str, kin: Kinematics):
+    """2x2 pixels per mm straight from wristrec's slide probe (k), or None if the session has none.
+
+    The probe moves the gripper +-d mm in base x and y with the line-up's own inverse kinematics, so the
+    table maps a commanded offset to the pixel shift it really produces (pan's turn and the joints'
+    sag included). Least squares over all distances: centroid = c0[run] + B @ D. Each run gets its own
+    c0 rather than its slide/base frame, because the joints' backlash makes the arm settle a few mm
+    differently depending on the direction it arrived from. Masks touching the image border are left
+    out: a half-visible tool's centroid is biased.
+    """
+    import samseg
+    root = OUT / session
+    rows = [json.loads(l) for l in open(root / "samples.jsonl")]
+    rows = [r for r in rows if (r["tag"] or "").startswith("slide/")]
+    if not rows:
+        return None
+    sam3 = samseg.load_sam3()
+    pts, run, prev = [], 0, None                           # (run, axis, mm, D, centroid, gripper xy mm)
+    for r in rows:
+        if r["tag"] == "slide/base":
+            if prev is not None and prev != "slide/base":
+                run += 1
+            prev = r["tag"]
+            continue
+        prev = r["tag"]
+        frame = cv2.imread(str(root / r["file"]))
+        res = samseg.find_text_mask(sam3, frame, prompt) or samseg.find_text_mask(sam3, frame, prompt, threshold=0.3)
+        if res is None:
+            print(f"  frame {r['i']} {r['tag']}: not found, skipped")
+            continue
+        m = res[0]
+        if m[0].any() or m[-1].any() or m[:, 0].any() or m[:, -1].any():
+            print(f"  frame {r['i']} {r['tag']}: touches the image edge, skipped")
+            continue
+        _, axis, mm = r["tag"].split("/")
+        D = np.array([float(mm), 0.0]) if axis == "x" else np.array([0.0, float(mm)])
+        xy = kin.fk(joints(r["q"]), r["q"]["wrist_roll.pos"])[:2, 3] * 1000
+        pts.append((run, axis, float(mm), D, np.array(samseg.mask_centroid(m)), xy))
+    if not {"x", "y"} <= {p[1] for p in pts}:
+        raise RuntimeError("need usable slide frames along both x and y")
+    runs = sorted({p[0] for p in pts})
+    X = np.array([np.r_[p[3], [p[0] == k for k in runs]] for p in pts], dtype=float)
+    C = np.array([p[4] for p in pts])
+    sol = np.linalg.lstsq(X, C, rcond=None)[0]
+    B = sol[:2].T
+    resid = C - X @ sol
+    A = np.linalg.lstsq(X, np.array([p[5] for p in pts]), rcond=None)[0][:2].T   # achieved mm per commanded mm
+    print(f"  {len(pts)} slide frames in {len(runs)} runs, fit residual {np.sqrt((resid ** 2).sum(1).mean()):.1f} px rms; "
+          f"arm moved {A[0, 0] * 100:.0f}% of the command in x, {A[1, 1] * 100:.0f}% in y")
+    for axis in "xy":                                      # does the table drift with distance?
+        for mm in sorted({abs(p[2]) for p in pts if p[1] == axis}):
+            sel = [i for i, p in enumerate(pts) if p[1] == axis and abs(p[2]) == mm]
+            local = np.mean([(C[i] - X[i, 2:] @ sol[2:]) / pts[i][2] for i in sel], axis=0)
+            print(f"  {axis} {mm:3.0f} mm: {len(sel)} frames  px per mm ({local[0]:5.2f}, {local[1]:5.2f})  "
+                  f"residual {np.sqrt((resid[sel] ** 2).sum(1).mean()):.1f} px")
+    return B
+
+
 def default_prompt(name: str) -> str:
     return re.sub(r"\d+$", "", name).replace("_", " ")
 
@@ -111,7 +185,22 @@ class Aligner:
         self.sam3 = samseg.load_sam3()
         self.tracker = samseg.MaskTracker("tiny")
         print(f"SAM 3 + SAM 2 loaded in {time.perf_counter() - t:.0f}s")
+        self.warm_up()
         self.primed = False
+
+    def warm_up(self) -> None:
+        """Run both models once now: the first call on the GPU is ~0.9 s slower, and nobody waits yet."""
+        t = time.perf_counter()
+        frame, _, _ = self.cam.latest()
+        res = self.samseg.find_text_mask(self.sam3, frame, self.prompt)
+        if res is None:                                     # parked pose: probably nothing in view
+            mask = np.zeros(frame.shape[:2], bool)
+            mask[200:280, 280:360] = True
+        else:
+            mask = res[0]
+        self.tracker.prime(frame, mask)
+        self.tracker.track(frame)
+        print(f"warmed up in {time.perf_counter() - t:.1f}s")
 
     def fresh_frame(self, after: float) -> np.ndarray:
         """First camera frame captured after time `after` (perf_counter)."""
@@ -160,9 +249,10 @@ def main():
     ap.add_argument("--align-only", action="store_true", help="stop after lining up (arm keeps holding)")
     ap.add_argument("--tol", type=float, default=6.0, help="px; done when the centroid is this close (~1.5 mm)")
     ap.add_argument("--gain", type=float, default=0.7)
-    ap.add_argument("--max-step", type=float, default=15.0, help="mm per correction")
-    ap.add_argument("--max-offset", type=float, default=40.0, help="mm; give up beyond this")
-    ap.add_argument("--iters", type=int, default=8)
+    ap.add_argument("--max-step", type=float, default=20.0, help="mm per correction")
+    ap.add_argument("--max-offset", type=float, default=100.0,
+                    help="mm; give up beyond this (the reach of the whole shifted grasp is checked every step too)")
+    ap.add_argument("--iters", type=int, default=12)
     ap.add_argument("--show", action="store_true", help="window with the mask, centroid (red) and target (cyan)")
     args = ap.parse_args()
 
@@ -171,8 +261,11 @@ def main():
     kin = Kinematics()
 
     if args.fit_table:
-        B, info = fit_table(args.fit_table, prompt, kin)
-        print(f"px per mm (rows u, v; columns base x, y):\n{B.round(2)}\n{info}")
+        B = fit_slide_table(args.fit_table, prompt, kin)
+        if B is None:                                      # older session: per-joint jogs only
+            B, info = fit_table(args.fit_table, prompt, kin)
+            print(info)
+        print(f"px per mm (rows u, v; columns base x, y):\n{B.round(2)}")
         skill["hover_px_per_mm"] = B.tolist()
         arm.skill_path(args.skill).write_text(json.dumps(skill))
         print(f"saved hover_px_per_mm in {args.skill}")
@@ -182,8 +275,7 @@ def main():
     if hover is None:
         raise SystemExit(f"{args.skill} has no hover_frame")
     if not args.set_target:
-        missing = [k for k in ("hover_target", "hover_px_per_mm") + (() if args.align_only else ("rejoin",))
-                   if k not in skill]
+        missing = [k for k in ("hover_target", "hover_px_per_mm", "rejoin") if k not in skill]
         if missing:
             raise SystemExit(f"{args.skill} is missing {', '.join(missing)} (see the docstring for how to set them)")
     if args.camera is None:
@@ -193,12 +285,12 @@ def main():
     cam.latest()
     aligner = Aligner(cam, prompt, args.show)
     robot = arm.connect_follower()
+    at_hover = False
     try:
         keys = skill["keys"]
         arm.play(robot, {**skill, "frames": skill["frames"][:hover + 1]})
+        at_hover = True
         q_h = dict(zip(keys, skill["frames"][hover]))
-        roll = q_h["wrist_roll.pos"]
-        T_h = kin.fk(joints(q_h), roll)
 
         if args.set_target:
             cs = [aligner.measure(settle=0.8 if k == 0 else 0.2) for k in range(5)]
@@ -212,38 +304,57 @@ def main():
 
         target = np.array(skill["hover_target"])
         Binv = np.linalg.inv(np.array(skill["hover_px_per_mm"]))
+        window = (hover - 1, hover, *skill["rejoin"])
+        cols = [keys.index(f"{j}.pos") for j in SOLVE]
         D = np.zeros(3)                                    # mm, base frame, z stays 0
-        q = joints(q_h)
+        frames = skill["frames"]                           # the grasp for the current D
+        errors = []
         ok = False
         for it in range(args.iters + 1):
-            c = aligner.measure(settle=0.8 if it == 0 else 0.4, target=target)
+            if it == 0:
+                wait_still(robot)
+            c = aligner.measure(settle=0.0 if it == 0 else 0.4, target=target)
             if c is None:
-                raise SystemExit(f"no '{prompt}' in view; nothing moved past the hover")
+                raise SystemExit(f"no '{prompt}' in view")
             e = target - np.array(c)
             print(f"  step {it}: centroid ({c[0]:.0f}, {c[1]:.0f})  error {np.linalg.norm(e):5.1f} px  "
                   f"offset x {D[0]:5.1f} y {D[1]:5.1f} mm")
             if np.linalg.norm(e) <= args.tol:
                 ok = True
                 break
+            errors.append(np.linalg.norm(e))
+            if len(errors) >= 3 and errors[-1] > errors[-2] > errors[-3]:
+                raise SystemExit("the error grew twice in a row: wrong object, or the pixel table is off")
             if it == args.iters:
                 break
             step = args.gain * (Binv @ e)
             if np.linalg.norm(step) > args.max_step:
                 step *= args.max_step / np.linalg.norm(step)
-            D[:2] += step
-            if np.linalg.norm(D) > args.max_offset:
+            nxt = D.copy()
+            nxt[:2] += step
+            if np.linalg.norm(nxt) > args.max_offset:
                 raise SystemExit(f"needs more than {args.max_offset:.0f} mm; is the tool where the skill expects it?")
-            q = kin.ik(q, roll, kin.target(T_h, D / 1000))
-            arm.move_to(robot, {**q_h, **{f"{j}.pos": float(v) for j, v in zip(SOLVE, q)}}, seconds=0.6)
+            try:                                           # the whole offset grasp must be reachable, not just this pose
+                frames, _ = shifted(skill, window, nxt / 1000, kin)
+            except RuntimeError as ex:
+                raise SystemExit(f"tool is out of reach at offset x {nxt[0]:.0f} y {nxt[1]:.0f} mm ({ex})")
+            D = nxt
+            arm.move_to(robot, {**q_h, **{keys[c]: float(frames[hover][c]) for c in cols}}, seconds=0.6)
         if not ok:
-            raise SystemExit(f"didn't converge in {args.iters} steps; stopping at the hover")
+            raise SystemExit(f"didn't converge in {args.iters} steps")
         print(f"lined up: offset x {D[0]:.1f} y {D[1]:.1f} mm")
         if args.align_only:
             return
 
-        c_, e_ = skill["rejoin"]
-        frames, _ = shifted(skill, (hover - 1, hover, c_, e_), D / 1000, kin)
         arm.play(robot, {**skill, "frames": frames[hover:]})
+    except SystemExit as stop:
+        if not at_hover or stop.code in (None, 0):
+            raise
+        # Any stop after reaching the hover (not Ctrl-C): never leave the arm hanging over the bench.
+        # Glide back to the recorded hover, then retrace the approach to the skill's start pose.
+        print(f"stopped: {stop}\ngoing home")
+        arm.play(robot, {**skill, "frames": skill["frames"][hover::-1]})
+        raise SystemExit(1)
     finally:
         cam.close()
         arm.disconnect(robot)
