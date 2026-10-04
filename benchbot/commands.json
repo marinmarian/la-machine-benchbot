@@ -18,5 +18,12 @@
     "clean",
     "home"
   ],
-  "clean the bench": "clean"
+  "clean the bench": "clean",
+  "give me the microphone": "microphone",
+  "hand me the microphone": "microphone",
+  "microphone please": "microphone",
+  "pass it over": "handoff",
+  "hand it over": "handoff",
+  "pass it to the other arm": "handoff",
+  "switch hands": "handoff"
 }
