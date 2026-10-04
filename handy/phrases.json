@@ -3,6 +3,7 @@
   "start": {
     "screwdriver": ["Screwdriver, coming up.", "Sure, grabbing the screwdriver.", "One screwdriver, on its way."],
     "microphone":  ["Microphone, coming up.", "Sure, getting the microphone."],
+    "black_motor2": ["Looking for the motor.", "Sure, let me find the motor."],
     "handoff":     ["Passing it over.", "Switching hands."],
     "clean":       ["Clearing the bench.", "On it, tidying up."],
     "return_tool": ["I'll take that back.", "Thanks, putting it away."],
@@ -12,6 +13,7 @@
   "done": {
     "screwdriver": ["Here you go.", "There's your screwdriver."],
     "microphone":  ["Here you go.", "Microphone's ready."],
+    "black_motor2": ["Got the motor.", "Motor's up."],
     "handoff":     ["Done.", "Got it on the other side."],
     "clean":       ["All clean.", "Bench is clear."],
     "return_tool": ["Stored.", "Back in its slot."],
@@ -21,5 +23,7 @@
   "busy":    ["One moment, I'm busy.", "Hang on, almost done."],
   "unknown": ["Sorry, I didn't get that.", "Say that again?"],
   "missing": ["I don't know how to do {skill} yet."],
+  "servo_failed": ["Sorry, I couldn't line up on it. Going back home.", "I can't get a good grip on that, heading home."],
+  "no_wrist": ["Sorry, my wrist camera isn't ready, so I won't try that blind."],
   "hello":   ["Handy here. What do you need?"]
 }

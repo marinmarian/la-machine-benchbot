@@ -191,6 +191,10 @@ python visual_servoing.py screwdriver4 --show                 # line up + grasp
   It also stops beyond `--max-offset` (100 mm) or when the error grows twice in a row (wrong object or bad table).
 - On any stop after reaching the hover it goes home: back to the recorded hover, then the approach in reverse.
   Ctrl-C never moves the arm.
+- `listen.py` loads SAM 3 + SAM 2 and opens the wrist camera at startup (~12 s), and plays every skill that has
+  these keys (black_motor2, screwdriver4) only through this line-up, never blind: "pick up the motor" lines up on the
+  motor first. If the line-up gives up, it says so and goes home; "stop" freezes the arm where it is. Without the
+  models (`--no-wrist`, or the camera missing) those skills are refused out loud.
 - The joints sag (a commanded 3° jog moves about 1°), so one big move is never trusted: each step is measured again.
 - The table is linear but the view isn't: sliding sideways turns the camera with pan, so px/mm falls from 3.4 at 3 cm
   to 2.8 at 9 cm, and the joints' backlash moves the settled pose ~4.5 mm with the approach direction. black_motor2
@@ -215,8 +219,8 @@ python listen.py --show           # same live window during the demo
 
 - A skill named like a slot requires that slot to be present. Other rules go in `slots.json` under
   `requires`, e.g. `"return_tool": {"screwdriver": "empty"}`.
-- Checks run before every skill in a chain. `--no-vision` disables them. If `slots.json` or the photos
-  are missing, listen.py says `vision: off` and runs as before.
+- Checks run before every skill in a chain. `--no-bench-check` disables them. If `slots.json` or the photos
+  are missing, listen.py says `bench camera check: off` and runs as before. (This is not the wrist camera.)
 - Re-capture `full` and `empty` in the demo room under demo lighting, right before the demo (20 s).
 - Boxes must not be covered by the arm in its home pose. Margins under 10 mean the box is ambiguous: make it tighter around where the tool actually sits, or redo setup.
 - Real test: take one tool out and run `check --show`. Only that slot should turn red.
@@ -228,6 +232,9 @@ python listen.py --show           # same live window during the demo
 - Lower the follower's speed/accel if grasps slip; smooth beats fast on video.
 - Re-capture the two vision reference photos in the final room/lighting.
 - Keep a hand on the power switch. `stop` (voice or typed) interrupts between frames.
+- `python listen.py` only hears you between two Enters: press Enter (terminal in front), say the command, press Enter
+  again. Talking to the audience never triggers it (20 s cap per command). `--ptt` is hold-to-talk on right Option from
+  any window instead (needs the terminal allowed under Accessibility); `--open-mic` is the old always-listening mode.
 - Noisy room: run with `--energy 0.02` or `0.03`, and hold the laptop mic close. Typing the command is an acceptable plan B — the judges care about the arm, not the mic.
 - `--model small.en` if `base.en` mishears tool names; add misheard variants to `commands.json` instead of fighting the model (e.g. `"screw driver"`, `"screwdrivers"`).
 

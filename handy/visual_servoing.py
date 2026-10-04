@@ -239,6 +239,94 @@ class Aligner:
         return c
 
 
+def prompt_for(name: str, skill: dict) -> str:
+    return skill.get("prompt") or default_prompt(name)
+
+
+class ServoFailed(Exception):
+    """Lining up gave up (tool not seen, out of reach, error growing...). The arm went home first."""
+
+
+class Stopped(Exception):
+    """should_stop() fired: the arm holds where it is."""
+
+
+def go_home(rig, a: str, skill: dict, why: str, should_stop=lambda: False) -> None:
+    """Never leave the arm hanging over the bench: glide back to the recorded hover, then retrace the
+    approach to the skill's start pose."""
+    print(f"stopped: {why}\ngoing home")
+    hover = skill["hover_frame"]
+    arm.play(rig, arm.on(a, {**skill, "frames": skill["frames"][hover::-1]}), should_stop=should_stop)
+
+
+def servo_grasp(rig, a: str, skill: dict, aligner: Aligner, kin: Kinematics, *, tol: float = 6.0,
+                gain: float = 0.7, max_step: float = 20.0, max_offset: float = 100.0, iters: int = 12,
+                align_only: bool = False, should_stop=lambda: False) -> np.ndarray:
+    """Play `skill` (one arm's part, plain keys: arm.solo) on arm `a` to its hover, line up on the tool,
+    then play the grasp with that offset. Returns the offset in mm. Any give-up after the hover sends the
+    arm home and raises ServoFailed; should_stop() raises Stopped and leaves the arm where it is."""
+    hover = skill["hover_frame"]
+    aligner.primed = False                                 # a new run: find the tool afresh with SAM 3
+    if not arm.play(rig, arm.on(a, {**skill, "frames": skill["frames"][:hover + 1]}), should_stop=should_stop):
+        raise Stopped()
+    try:
+        D, frames = _line_up(rig, a, skill, aligner, kin, tol, gain, max_step, max_offset, iters, should_stop)
+    except ServoFailed as e:
+        go_home(rig, a, skill, str(e), should_stop)
+        raise
+    if align_only:
+        return D
+    if not arm.play(rig, arm.on(a, {**skill, "frames": frames[hover:]}), should_stop=should_stop):
+        raise Stopped()
+    return D
+
+
+def _line_up(rig, a, skill, aligner, kin, tol, gain, max_step, max_offset, iters, should_stop):
+    """Step at the hover's height until the tool sits on hover_target. (offset mm, shifted frames)."""
+    keys, hover = skill["keys"], skill["hover_frame"]
+    q_h = dict(zip(keys, skill["frames"][hover]))
+    target = np.array(skill["hover_target"])
+    Binv = np.linalg.inv(np.array(skill["hover_px_per_mm"]))
+    window = (hover - 1, hover, *skill["rejoin"])
+    cols = [keys.index(f"{j}.pos") for j in SOLVE]
+    D = np.zeros(3)                                        # mm, base frame, z stays 0
+    frames = skill["frames"]                               # the grasp for the current D
+    errors = []
+    for it in range(iters + 1):
+        if should_stop():
+            raise Stopped()
+        if it == 0:
+            wait_still(rig)
+        c = aligner.measure(settle=0.0 if it == 0 else 0.4, target=target)
+        if c is None:
+            raise ServoFailed(f"no '{aligner.prompt}' in view")
+        e = target - np.array(c)
+        print(f"  step {it}: centroid ({c[0]:.0f}, {c[1]:.0f})  error {np.linalg.norm(e):5.1f} px  "
+              f"offset x {D[0]:5.1f} y {D[1]:5.1f} mm")
+        if np.linalg.norm(e) <= tol:
+            print(f"lined up: offset x {D[0]:.1f} y {D[1]:.1f} mm")
+            return D, frames
+        errors.append(np.linalg.norm(e))
+        if len(errors) >= 3 and errors[-1] > errors[-2] > errors[-3]:
+            raise ServoFailed("the error grew twice in a row: wrong object, or the pixel table is off")
+        if it == iters:
+            break
+        step = gain * (Binv @ e)
+        if np.linalg.norm(step) > max_step:
+            step *= max_step / np.linalg.norm(step)
+        nxt = D.copy()
+        nxt[:2] += step
+        if np.linalg.norm(nxt) > max_offset:
+            raise ServoFailed(f"needs more than {max_offset:.0f} mm; is the tool where the skill expects it?")
+        try:                                               # the whole offset grasp must be reachable, not just this pose
+            frames, _ = shifted(skill, window, nxt / 1000, kin)
+        except RuntimeError as ex:
+            raise ServoFailed(f"tool is out of reach at offset x {nxt[0]:.0f} y {nxt[1]:.0f} mm ({ex})")
+        D = nxt
+        arm.move_to(rig, arm.prefix(a, {**q_h, **{keys[c]: frames[hover][c] for c in cols}}), seconds=0.6)
+    raise ServoFailed(f"didn't converge in {iters} steps")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("skill")
@@ -259,7 +347,7 @@ def main():
 
     full = arm.load_skill(args.skill)                      # written back with any new keys
     skill = arm.solo(full, args.arm)                       # this arm's joints, plain keys
-    prompt = args.prompt or skill.get("prompt") or default_prompt(args.skill)
+    prompt = args.prompt or prompt_for(args.skill, skill)
     kin = Kinematics()
 
     if args.fit_table:
@@ -288,75 +376,21 @@ def main():
     aligner = Aligner(cam, prompt, args.show)
     a = args.arm
     rig = {a: arm.connect_follower(a)}
-    at_hover = False
     try:
-        keys = skill["keys"]
-        arm.play(rig, arm.on(a, {**skill, "frames": skill["frames"][:hover + 1]}))
-        at_hover = True
-        q_h = dict(zip(keys, skill["frames"][hover]))
-
         if args.set_target:
+            arm.play(rig, arm.on(a, {**skill, "frames": skill["frames"][:hover + 1]}))
             cs = [aligner.measure(settle=0.8 if k == 0 else 0.2) for k in range(5)]
             cs = [c for c in cs if c is not None]
             if not cs:
-                raise SystemExit(f"no '{prompt}' in view at the hover")
+                go_home(rig, a, skill, f"no '{prompt}' in view at the hover")
+                raise SystemExit(1)
             full["hover_target"] = np.mean(cs, axis=0).round(1).tolist()
             arm.update_skill(args.skill, full)
             print(f"saved hover_target {full['hover_target']} (spread {np.ptp(cs, axis=0).round(1)} px)")
             return
-
-        target = np.array(skill["hover_target"])
-        Binv = np.linalg.inv(np.array(skill["hover_px_per_mm"]))
-        window = (hover - 1, hover, *skill["rejoin"])
-        cols = [keys.index(f"{j}.pos") for j in SOLVE]
-        D = np.zeros(3)                                    # mm, base frame, z stays 0
-        frames = skill["frames"]                           # the grasp for the current D
-        errors = []
-        ok = False
-        for it in range(args.iters + 1):
-            if it == 0:
-                wait_still(rig)
-            c = aligner.measure(settle=0.0 if it == 0 else 0.4, target=target)
-            if c is None:
-                raise SystemExit(f"no '{prompt}' in view")
-            e = target - np.array(c)
-            print(f"  step {it}: centroid ({c[0]:.0f}, {c[1]:.0f})  error {np.linalg.norm(e):5.1f} px  "
-                  f"offset x {D[0]:5.1f} y {D[1]:5.1f} mm")
-            if np.linalg.norm(e) <= args.tol:
-                ok = True
-                break
-            errors.append(np.linalg.norm(e))
-            if len(errors) >= 3 and errors[-1] > errors[-2] > errors[-3]:
-                raise SystemExit("the error grew twice in a row: wrong object, or the pixel table is off")
-            if it == args.iters:
-                break
-            step = args.gain * (Binv @ e)
-            if np.linalg.norm(step) > args.max_step:
-                step *= args.max_step / np.linalg.norm(step)
-            nxt = D.copy()
-            nxt[:2] += step
-            if np.linalg.norm(nxt) > args.max_offset:
-                raise SystemExit(f"needs more than {args.max_offset:.0f} mm; is the tool where the skill expects it?")
-            try:                                           # the whole offset grasp must be reachable, not just this pose
-                frames, _ = shifted(skill, window, nxt / 1000, kin)
-            except RuntimeError as ex:
-                raise SystemExit(f"tool is out of reach at offset x {nxt[0]:.0f} y {nxt[1]:.0f} mm ({ex})")
-            D = nxt
-            arm.move_to(rig, arm.prefix(a, {**q_h, **{keys[c]: frames[hover][c] for c in cols}}), seconds=0.6)
-        if not ok:
-            raise SystemExit(f"didn't converge in {args.iters} steps")
-        print(f"lined up: offset x {D[0]:.1f} y {D[1]:.1f} mm")
-        if args.align_only:
-            return
-
-        arm.play(rig, arm.on(a, {**skill, "frames": frames[hover:]}))
-    except SystemExit as stop:
-        if not at_hover or stop.code in (None, 0):
-            raise
-        # Any stop after reaching the hover (not Ctrl-C): never leave the arm hanging over the bench.
-        # Glide back to the recorded hover, then retrace the approach to the skill's start pose.
-        print(f"stopped: {stop}\ngoing home")
-        arm.play(rig, arm.on(a, {**skill, "frames": skill["frames"][hover::-1]}))
+        servo_grasp(rig, a, skill, aligner, kin, tol=args.tol, gain=args.gain, max_step=args.max_step,
+                    max_offset=args.max_offset, iters=args.iters, align_only=args.align_only)
+    except ServoFailed:
         raise SystemExit(1)
     finally:
         cam.close()

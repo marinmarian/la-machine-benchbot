@@ -25,5 +25,11 @@
   "pass it over": "handoff",
   "hand it over": "handoff",
   "pass it to the other arm": "handoff",
-  "switch hands": "handoff"
+  "switch hands": "handoff",
+  "pick up the motor": "black_motor2",
+  "grab the motor": "black_motor2",
+  "get the motor": "black_motor2",
+  "give me the motor": "black_motor2",
+  "black motor": "black_motor2",
+  "the servo motor": "black_motor2"
 }
