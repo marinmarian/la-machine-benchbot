@@ -86,6 +86,18 @@ so keep the original pair listed first.
 3. **Edit** `commands.json` for the phrases you'll actually say.
 4. **Run** the demo: `python listen.py` (first check `python listen.py --dry-run`).
 
+## Spoken replies
+
+Handy talks back through macOS `say` (offline). It acknowledges a command before the arm moves
+("Screwdriver, coming up."), announces when a skill is done ("Here you go."), confirms stop,
+says when it is busy, and apologises when it did not understand a sentence. Lines live in
+`phrases.json`, a few variants per skill picked at random; `_default` covers new skills.
+The mic is muted while it speaks so it never triggers itself.
+
+Voice: the stock voice is dated. Download "Ava (Premium)" or "Zoe (Premium)" once (System Settings >
+Accessibility > Spoken Content > System Voice > Manage Voices, ~400 MB), then set `TTS_VOICE=Ava` in `.env`.
+Try it: `say -v Ava "Screwdriver, coming up."`
+
 ## Tool detector (YOLO, trained on your own tools, offline)
 
 Live camera window with a labelled box on every tool, and a spoken refusal when the tool a skill
