@@ -210,6 +210,7 @@ def main():
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--fps", type=int, default=30, help="control rate in teleop (skills use their own fps)")
     ap.add_argument("--skill", help="replay this skill instead of teleop (no leader needed)")
+    ap.add_argument("--arm", default=arm.DEFAULT_ARM, choices=arm.ARMS, help="which arm carries the wrist camera")
     ap.add_argument("--hold-at-hover", action="store_true", help="stop the skill at the hover frame")
     ap.add_argument("--hover-lead", type=float, default=2.0,
                     help="hover = this many seconds before the grasp; high enough to slide the tool around under the open jaws")
@@ -230,7 +231,7 @@ def main():
 
     skill, hover = None, None
     if args.skill:
-        skill = arm.load_skill(args.skill)
+        skill = arm.solo(arm.load_skill(args.skill), args.arm)
         if args.hover_frame is not None:
             hover = args.hover_frame
         elif "hover_frame" in skill:
@@ -244,20 +245,27 @@ def main():
     cam = Camera(int(args.camera), args.width, args.height)
     frame, _, _ = cam.latest()
     h, w = frame.shape[:2]
-    robot = arm.connect_follower()
-    leader = None if skill else arm.connect_leader()
+    robot = arm.connect_follower(args.arm)
+    rig = {args.arm: robot}
+    leader = None if skill else arm.connect_leader(args.arm)
     root = OUT / args.session
     writer = Writer(root)
     meta = {"session": args.session, "created": datetime.now().isoformat(timespec="seconds"),
-            "camera": int(args.camera), "resolution": [w, h], "fps": fps, "follower_id": robot.id,
+            "camera": int(args.camera), "resolution": [w, h], "fps": fps, "arm": args.arm, "follower_id": robot.id,
             "skill": args.skill, "hover_frame": hover, "jog_step": args.jog_step, "slide_mm": [float(x) for x in args.slide_mm.split(",")]}
     (root / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"camera {args.camera} at {w}x{h}, saving to {root}")
 
+    def pose() -> dict:                           # measured joints, plain keys
+        return arm.split(arm.current_pose(rig), rig)[args.arm]
+
+    def send(cmd: dict) -> None:
+        arm.send(rig, arm.prefix(args.arm, cmd))
+
     def skill_pose(i: int) -> dict:
         return dict(zip(skill["keys"], skill["frames"][i]))
 
-    cmd = arm.current_pose(robot)
+    cmd = pose()
     si = 0                                        # next skill frame
     motion: list[dict] = []                       # queued segments, run one tick at a time
     seg_t0, seg_from = None, None
@@ -277,7 +285,7 @@ def main():
         last_seq = seq
         writer.save(frame, {"t": round(ft - t_start, 4), "seq": seq, "mode": mode, "tag": tag,
                             "skill_frame": si if skill else None,
-                            "q": arm.current_pose(robot), "cmd": cmd})
+                            "q": pose(), "cmd": cmd})
 
     try:
         while True:
@@ -288,7 +296,7 @@ def main():
                     seg_t0, seg_from = now, dict(cmd)
                 a = min(1.0, (now - seg_t0) / seg["seconds"])
                 cmd = {k: seg_from[k] + (seg["target"][k] - seg_from[k]) * a for k in seg["target"]}
-                arm.send(robot, cmd)
+                send(cmd)
                 if a >= 1.0:
                     motion.pop(0)
                     seg_t0 = None
@@ -298,10 +306,10 @@ def main():
                         mode = next_mode
             elif mode == "teleop":
                 cmd = leader.get_action()
-                arm.send(robot, cmd)
+                send(cmd)
             elif mode == "skill":
                 cmd = skill_pose(si)
-                arm.send(robot, cmd)
+                send(cmd)
                 si += 1
                 if args.hold_at_hover and si == hover:
                     mode = "hold"
@@ -356,7 +364,7 @@ def main():
         cv2.destroyAllWindows()
         cam.close()
         writer.close()
-        arm.disconnect(robot)
+        arm.disconnect(rig)
         if leader:
             leader.disconnect()
         print(f"{writer.n} frames in {root}" + (f" ({writer.dropped} dropped: disk too slow)" if writer.dropped else ""))

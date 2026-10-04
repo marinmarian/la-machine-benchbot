@@ -1,6 +1,7 @@
 # benchbot — voice-triggered SO-101 bench helper
 
-Record a motion once with the leader arm, replay it by name with your voice. Fully offline.
+Record a motion once with the leader arm(s), replay it by name with your voice. Fully offline.
+One arm or two: a skill file holds every arm that was recording, keyed `right_…`/`left_…`.
 
 ## Setup (done 2026-10-03 on Marin's Mac — kept here for reference)
 
@@ -14,14 +15,15 @@ uv pip install --python "$(which python)" faster-whisper sounddevice rapidfuzz
 python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', compute_type='int8')"   # pre-download, verified with HF_HUB_OFFLINE=1
 ```
 
-Arms are identified by their controller board's USB serial, so ports never need editing:
-`python arm.py` lists what is connected (role, calibration id, port). The serial -> calibration id
-map is `arms.json`. A board it hasn't seen is matched once by reading the calibration stored in its
-motors (read-only) and comparing with the calibration files, then saved there.
-`FOLLOWER_ID` / `LEADER_ID` in `.env` pin which arm to use: a script refuses to run on a different
-arm (skills only replay correctly on the arm they were recorded on). Unset, it uses whichever
-follower/leader is plugged in. `FOLLOWER_PORT` / `LEADER_PORT` are only a fallback for a board
-that can't be identified.
+Arms are named in `.env` (`ARMS=right,left`) and each name gets its calibration ids
+(`RIGHT_FOLLOWER_ID`, `RIGHT_LEADER_ID`, and the same for `LEFT_`). Ports never need editing: each controller
+board is recognised by its USB serial (`arms.json`, serial -> calibration id). `python arm.py` lists what is
+connected (arm, role, calibration id, port). A board it hasn't seen is matched once by reading the calibration
+stored in its motors (read-only) and comparing with the calibration files, then saved there. An id set in
+`.env` must be the arm that is plugged in: a script refuses to drive a different one (skills only replay
+correctly on the arm they were recorded on). `{ARM}_FOLLOWER_PORT` / `{ARM}_LEADER_PORT` are only a fallback
+for a board that can't be identified. `python ports.py` pings every `/dev/tty.usbmodem*` and guesses leader vs
+follower; useful for a board whose motors match no calibration yet.
 Calibration files live in `~/.cache/huggingface/lerobot/calibration/` and a copy is committed under
 `benchbot/calibration/` (same layout; ids `follower_so101`, `leader_so101`, plus `*_left` for the second pair).
 Restore them on a fresh machine with:
@@ -33,12 +35,43 @@ cp -R benchbot/calibration/. ~/.cache/huggingface/lerobot/calibration/
 Recorded skills (`benchbot/skills/*.json`) are committed too; they only replay correctly on the arms they were recorded with.
 
 Run scripts with the env active: `python record.py home`, `python replay.py home`, `python listen.py`.
+Every script takes `--arms right` (or `left`, or `right,left`) to drive a subset; the default is all arms in `ARMS`.
+`listen.py --arms right` is the one to use while the second pair is not calibrated yet, otherwise startup fails
+on the missing calibration file.
 (`uv run` is not used: the pyproject's `lerobot[feetech]` line would pull a second lerobot + torch from PyPI.)
 
 Note: `connect()` compares the motors' stored calibration with the file and, on mismatch, drops into
 the interactive `lerobot-calibrate` prompt. If a script seems to hang right after connecting, look for that prompt.
 
 macOS: give the terminal microphone permission the first time `listen.py` runs.
+
+## Second arm (two hands working together)
+
+The second pair plugs in as two more `/dev/tty.usbmodem*` ports. Set it up once:
+
+1. Power it and run `python ports.py`. A silent port means motor power is off or the 3-pin bus cable to the
+   first motor is loose; the USB board shows up without either. If only id 1 answers, the motors are a fresh kit:
+   run `lerobot-setup-motors` for that arm first.
+2. Decide which port is the leader (the one with the handle; torque off). Confirm by unplugging one USB cable
+   and re-running `ports.py`.
+3. Calibrate both with the ids from `.env` (interactive: move each joint through its full range); after that
+   `python arm.py` recognises the two boards by themselves:
+   ```bash
+   lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/tty.usbmodem… --robot.id=follower_so101_left
+   lerobot-calibrate --teleop.type=so101_leader  --teleop.port=/dev/tty.usbmodem… --teleop.id=leader_so101_left
+   ```
+4. Check it mirrors: `python record.py scratch --arms left`, wave the leader, Enter twice, then `python replay.py scratch`.
+
+Then record two-arm skills exactly like one-arm ones; `record.py` reads both leaders every tick:
+```bash
+python record.py handoff            # both arms (default) — e.g. left holds the board, right drives the screw
+python record.py tweezers --arms left
+python replay.py --list             # shows which arms each skill uses
+```
+Rules that now apply to both arms at once: start and end every skill with BOTH arms in their home pose, and
+when a one-arm skill plays, the other arm simply keeps holding wherever it was left. The old one-arm skills
+(`clean`, `screwdriver`, `microphone`, `test`) have unprefixed keys and are mapped to the first arm in `ARMS`,
+so keep the original pair listed first.
 
 ## Workflow
 
@@ -60,10 +93,10 @@ needs is not on the bench ("Sorry, I don't see the screwdriver on the bench"). Z
 failed on these objects, so we train a small YOLO on auto-labelled frames. Budget ~1 h.
 
 ```bash
-# camera fixed in its final spot, arm parked OUT of view, bench empty
-python collect.py --background                 # saves vision/empty.jpg + empty frames
-# park the arm IN view, bench still empty, run it again (teaches "arm is not a tool")
-python collect.py --background
+# camera fixed in its final spot, arms parked OUT of view, bench empty
+python collect.py --background                 # (re)writes vision/empty.jpg + empty frames
+# park the arms IN view, bench still empty (teaches "arms are not tools")
+python collect.py --background --keep-empty
 # one object at a time, fully inside the frame; move + rotate it around the bench for 45 s
 python collect.py screwdriver
 python collect.py microphone                   # class name = skill name
@@ -81,6 +114,9 @@ python vision.py watch                         # boxes now come from the detecto
 ## Wrist camera dataset (for SAM alignment experiments)
 
 `wristrec.py` records wrist-camera frames with the follower's measured joints next to each one.
+
+`wristrec.py`, `adjust.py` and `visual_servoing.py` work on one arm: `--arm right|left`, default the first in
+`ARMS` (the one carrying the wrist camera). They read and write only that arm's part of a skill.
 
 ```bash
 python wristrec.py --probe                        # every camera tiled with its index; put the wrist one in .env as WRIST_CAMERA
@@ -189,4 +225,4 @@ Your installed version may use different module paths. Check with:
 ```bash
 python -c "import lerobot, pkgutil; print(lerobot.__version__); print([m.name for m in pkgutil.iter_modules(lerobot.robots.__path__)])"
 ```
-Only `arm.py` touches lerobot, so that's the only file to adjust.
+Only `arm.py` and `ports.py` touch lerobot, so those are the only files to adjust.

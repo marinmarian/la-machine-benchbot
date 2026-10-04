@@ -17,7 +17,6 @@ also logged in the skill's "adjustments" list.
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -122,13 +121,15 @@ def main():
     ap.add_argument("--dy", type=float, default=0.0, help="cm, base frame")
     ap.add_argument("--dz", type=float, default=0.0, help="cm, base frame (negative = lower)")
     ap.add_argument("--window", type=int, nargs=4, metavar=("A", "B", "C", "E"), required=True)
+    ap.add_argument("--arm", default=arm.DEFAULT_ARM, choices=arm.ARMS, help="which arm's part of the skill to shift")
     ap.add_argument("--dry-run", action="store_true", help="report, don't write")
     args = ap.parse_args()
 
     a, b, c, e = args.window
     if not a < b <= c < e:
         ap.error("--window needs A < B <= C < E")
-    skill = arm.load_skill(args.skill)
+    full = arm.load_skill(args.skill)
+    skill = arm.solo(full, args.arm)
     d = np.array([args.dx, args.dy, args.dz]) / 100
     frames, report = shifted(skill, (a, b, c, e), d, Kinematics())
 
@@ -146,11 +147,14 @@ def main():
     backup = src.parent / "backup" / f"{args.skill}.{datetime.now():%Y%m%d-%H%M%S}.json"
     backup.parent.mkdir(exist_ok=True)
     shutil.copy2(src, backup)
-    skill["frames"] = frames
-    skill.setdefault("adjustments", []).append(
-        {"at": datetime.now().isoformat(timespec="seconds"), "d_cm": [args.dx, args.dy, args.dz],
-         "window": [a, b, c, e]})
-    src.write_text(json.dumps(skill))
+    mine = [i for i, k in enumerate(full["keys"]) if k.startswith(args.arm + "_")]
+    for row, new in zip(full["frames"], frames):
+        for i, v in zip(mine, new):
+            row[i] = v
+    full.setdefault("adjustments", []).append(
+        {"at": datetime.now().isoformat(timespec="seconds"), "arm": args.arm,
+         "d_cm": [args.dx, args.dy, args.dz], "window": [a, b, c, e]})
+    arm.update_skill(args.skill, full)
     print(f"wrote {src} (original in {backup})")
 
 

@@ -1,8 +1,9 @@
 """Collect auto-labelled training frames for the tool detector, one object class at a time.
 
-    python collect.py --background            # 1) empty bench (camera fixed!): saves vision/empty.jpg
-                                              #    + ~20 empty frames. Then park the arm IN view and run
-                                              #    it again so the detector learns the arm is not a tool.
+    python collect.py --background            # 1) empty bench (camera fixed!): (re)writes vision/empty.jpg
+                                              #    + ~20 empty frames.
+    python collect.py --background --keep-empty   # then arms parked IN view, bench still empty: more
+                                              #    background frames so the detector learns arms are not tools
     python collect.py screwdriver --seconds 45   # 2) ONE object on the bench, move it around while it records
     python collect.py microphone                 #    repeat per class (class name = skill name)
 
@@ -70,6 +71,7 @@ def main():
     ap.add_argument("--background", action="store_true", help="record empty-bench / arm-only frames with empty labels")
     ap.add_argument("--seconds", type=float, default=45)
     ap.add_argument("--every", type=float, default=0.3, help="seconds between saved frames")
+    ap.add_argument("--keep-empty", action="store_true", help="--background: keep the existing vision/empty.jpg (use for the arm-in-view pass)")
     args = ap.parse_args()
     if not args.background and not args.name:
         ap.error("give a class name or --background")
@@ -80,10 +82,11 @@ def main():
     try:
         if args.background:
             frame = cam.latest()
-            if not EMPTY.exists():
+            if not args.keep_empty:
+                # always refresh: a stale empty.jpg from an earlier camera position poisons every label
                 EMPTY.parent.mkdir(exist_ok=True)
                 cv2.imwrite(str(EMPTY), frame)
-                print(f"saved background -> {EMPTY}")
+                print(f"saved background -> {EMPTY}  (bench must be EMPTY for this one)")
             print("recording background frames (empty bench, or arm in view, nothing else)…")
             n, t0, last = 0, time.perf_counter(), 0.0
             while time.perf_counter() - t0 < args.seconds / 3:

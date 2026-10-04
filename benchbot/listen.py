@@ -3,6 +3,7 @@
     python listen.py                      # voice + typed commands
     python listen.py --model small.en     # better accuracy, slower
     python listen.py --dry-run            # no robot, just prints what it would do
+    python listen.py --arms right         # drive only one arm (two-arm skills play their right half)
 
 Say e.g. "give me the screwdriver", "hand me the tweezers", "clean up", "stop".
 You can also just TYPE the command and press Enter (demo plan B).
@@ -135,6 +136,7 @@ def main():
     ap.add_argument("--meter", action="store_true", help="print live mic RMS for 8 s and exit")
     ap.add_argument("--no-vision", action="store_true", help="skip the camera slot check before skills")
     ap.add_argument("--show", action="store_true", help="keep a live camera window with slot boxes open")
+    ap.add_argument("--arms", help=f"comma list of arms to drive, default all: {','.join(arm.ARMS)}")
     args = ap.parse_args()
     if args.meter:
         return meter()
@@ -152,7 +154,8 @@ def main():
 
     cam = vision.LiveCamera(vision.load_config() or {"camera_index": 0}) if (use_vision and args.show) else None
 
-    robot = None if args.dry_run else arm.connect_follower()
+    arms = arm.parse_arms(args.arms)
+    rig = None if args.dry_run else arm.connect_followers(arms)   # {arm_name: follower}
     stop_flag = threading.Event()
     busy = threading.Lock()
 
@@ -175,11 +178,12 @@ def main():
                     if not ok:
                         speak(f"Sorry, {why}.")
                         break
-                print(f"  ▶ {s}")
-                if robot is None:
+                skill = arm.load_skill(s)
+                print(f"  ▶ {s} ({', '.join(arm.skill_arms(skill))})")
+                if rig is None:
                     time.sleep(1.0)
                     continue
-                if not arm.play(robot, arm.load_skill(s), speed=args.speed, should_stop=stop_flag.is_set):
+                if not arm.play(rig, skill, speed=args.speed, should_stop=stop_flag.is_set):
                     print("  interrupted")
                     break
             print("  ✓ done")
@@ -220,8 +224,8 @@ def main():
     finally:
         if cam:
             cam.close()
-        if robot is not None:
-            arm.disconnect(robot)
+        if rig is not None:
+            arm.disconnect(rig)
 
 
 if __name__ == "__main__":

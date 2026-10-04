@@ -99,18 +99,18 @@ def fit_table(session: str, prompt: str, kin: Kinematics) -> tuple[np.ndarray, d
     return B, {"radial": radial.tolist(), "side": side.tolist(), "cond": float(np.linalg.cond(A))}
 
 
-def wait_still(robot, max_s: float = 0.8, tol: float = 0.2, dt: float = 0.05) -> None:
+def wait_still(rig, max_s: float = 0.8, tol: float = 0.2, dt: float = 0.05) -> None:
     """Return once no arm joint moves more than `tol` degrees in `dt`, or after `max_s`.
 
     A hover inside a pause in the recording is already still on arrival (black_motor2), so this
     returns at once; a hover mid-motion (screwdriver4) waits for the arm to stop.
     """
     t0 = time.perf_counter()
-    prev = arm.current_pose(robot)
+    prev = arm.current_pose(rig)
     while time.perf_counter() - t0 < max_s:
         time.sleep(dt)
-        cur = arm.current_pose(robot)
-        if max(abs(cur[k] - prev[k]) for k in cur if not k.startswith("gripper")) < tol:
+        cur = arm.current_pose(rig)
+        if max(abs(cur[k] - prev[k]) for k in cur if not k.endswith("gripper.pos")) < tol:
             return
         prev = cur
 
@@ -244,6 +244,7 @@ def main():
     ap.add_argument("skill")
     ap.add_argument("--prompt", help="what SAM 3 looks for (default: skill's 'prompt', else its name without digits)")
     ap.add_argument("--camera", type=int, default=os.environ.get("WRIST_CAMERA"))
+    ap.add_argument("--arm", default=arm.DEFAULT_ARM, choices=arm.ARMS, help="which arm carries the wrist camera")
     ap.add_argument("--fit-table", metavar="SESSION", help="fit hover_px_per_mm from a wristrec jog session, save it, exit")
     ap.add_argument("--set-target", action="store_true", help="play to the hover, save where the tool looks as hover_target, exit")
     ap.add_argument("--align-only", action="store_true", help="stop after lining up (arm keeps holding)")
@@ -256,7 +257,8 @@ def main():
     ap.add_argument("--show", action="store_true", help="window with the mask, centroid (red) and target (cyan)")
     args = ap.parse_args()
 
-    skill = arm.load_skill(args.skill)
+    full = arm.load_skill(args.skill)                      # written back with any new keys
+    skill = arm.solo(full, args.arm)                       # this arm's joints, plain keys
     prompt = args.prompt or skill.get("prompt") or default_prompt(args.skill)
     kin = Kinematics()
 
@@ -266,8 +268,8 @@ def main():
             B, info = fit_table(args.fit_table, prompt, kin)
             print(info)
         print(f"px per mm (rows u, v; columns base x, y):\n{B.round(2)}")
-        skill["hover_px_per_mm"] = B.tolist()
-        arm.skill_path(args.skill).write_text(json.dumps(skill))
+        full["hover_px_per_mm"] = B.tolist()
+        arm.update_skill(args.skill, full)
         print(f"saved hover_px_per_mm in {args.skill}")
         return
 
@@ -284,11 +286,12 @@ def main():
     cam = Camera(int(args.camera), 640, 480)
     cam.latest()
     aligner = Aligner(cam, prompt, args.show)
-    robot = arm.connect_follower()
+    a = args.arm
+    rig = {a: arm.connect_follower(a)}
     at_hover = False
     try:
         keys = skill["keys"]
-        arm.play(robot, {**skill, "frames": skill["frames"][:hover + 1]})
+        arm.play(rig, arm.on(a, {**skill, "frames": skill["frames"][:hover + 1]}))
         at_hover = True
         q_h = dict(zip(keys, skill["frames"][hover]))
 
@@ -297,9 +300,9 @@ def main():
             cs = [c for c in cs if c is not None]
             if not cs:
                 raise SystemExit(f"no '{prompt}' in view at the hover")
-            skill["hover_target"] = np.mean(cs, axis=0).round(1).tolist()
-            arm.skill_path(args.skill).write_text(json.dumps(skill))
-            print(f"saved hover_target {skill['hover_target']} (spread {np.ptp(cs, axis=0).round(1)} px)")
+            full["hover_target"] = np.mean(cs, axis=0).round(1).tolist()
+            arm.update_skill(args.skill, full)
+            print(f"saved hover_target {full['hover_target']} (spread {np.ptp(cs, axis=0).round(1)} px)")
             return
 
         target = np.array(skill["hover_target"])
@@ -312,7 +315,7 @@ def main():
         ok = False
         for it in range(args.iters + 1):
             if it == 0:
-                wait_still(robot)
+                wait_still(rig)
             c = aligner.measure(settle=0.0 if it == 0 else 0.4, target=target)
             if c is None:
                 raise SystemExit(f"no '{prompt}' in view")
@@ -339,25 +342,25 @@ def main():
             except RuntimeError as ex:
                 raise SystemExit(f"tool is out of reach at offset x {nxt[0]:.0f} y {nxt[1]:.0f} mm ({ex})")
             D = nxt
-            arm.move_to(robot, {**q_h, **{keys[c]: float(frames[hover][c]) for c in cols}}, seconds=0.6)
+            arm.move_to(rig, arm.prefix(a, {**q_h, **{keys[c]: frames[hover][c] for c in cols}}), seconds=0.6)
         if not ok:
             raise SystemExit(f"didn't converge in {args.iters} steps")
         print(f"lined up: offset x {D[0]:.1f} y {D[1]:.1f} mm")
         if args.align_only:
             return
 
-        arm.play(robot, {**skill, "frames": frames[hover:]})
+        arm.play(rig, arm.on(a, {**skill, "frames": frames[hover:]}))
     except SystemExit as stop:
         if not at_hover or stop.code in (None, 0):
             raise
         # Any stop after reaching the hover (not Ctrl-C): never leave the arm hanging over the bench.
         # Glide back to the recorded hover, then retrace the approach to the skill's start pose.
         print(f"stopped: {stop}\ngoing home")
-        arm.play(robot, {**skill, "frames": skill["frames"][hover::-1]})
+        arm.play(rig, arm.on(a, {**skill, "frames": skill["frames"][hover::-1]}))
         raise SystemExit(1)
     finally:
         cam.close()
-        arm.disconnect(robot)
+        arm.disconnect(rig)
 
 
 if __name__ == "__main__":
