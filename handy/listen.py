@@ -10,7 +10,8 @@
 
 Skills set up for the wrist camera (hover_target etc., see visual_servoing.py; e.g. black_motor2) are
 always played lining up on the tool with SAM 3 + SAM 2, never blind. Those models load at startup
-(~20 s); without them (--no-wrist, or no wrist camera) such a skill is refused out loud.
+(~12 s). If the wrist camera is missing or sends no frames, listen.py exits at startup, and it stops
+the demo if the camera drops out later (the arm goes home first). --no-wrist refuses those skills instead.
 
 Say e.g. "give me the screwdriver", "hand me the tweezers", "clean up", "stop".
 You can also just TYPE the command and press Enter (demo plan B).
@@ -26,6 +27,7 @@ import os
 import queue
 import random
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -218,28 +220,46 @@ def vs_ready(skill: dict) -> bool:
     return all(k in skill for k in ("hover_frame", "hover_target", "hover_px_per_mm", "rejoin"))
 
 
-def load_wrist(servo_skills: set[str]) -> dict | None:
-    """Open the wrist camera and load + warm up SAM 3 / SAM 2 now, so a command never waits for them."""
+def load_wrist(servo_skills: set[str]) -> dict:
+    """Open the wrist camera and load + warm up SAM 3 / SAM 2 now, so a command never waits for them.
+    No camera, or no frames from it: exit, the demo can't do its vision skills."""
     index = os.environ.get("WRIST_CAMERA")
     if index is None:
-        print("wrist camera: WRIST_CAMERA not set in .env")
-        return None
+        raise SystemExit("wrist camera: WRIST_CAMERA not set in .env (find it with `python wristrec.py --probe`), "
+                         "or run with --no-wrist")
+    from wristrec import built_in, mac_cameras
+    names = mac_cameras()
+    if names and (int(index) >= len(names) or built_in(names[int(index)])):
+        # unplugged: the laptop's own camera slides down to its index, and we'd line up through the wrong camera
+        raise SystemExit(f"wrist camera: not connected (WRIST_CAMERA={index}, macOS sees {names}). "
+                         f"Plug it in, or run with --no-wrist")
     try:
         import visual_servoing as vs
         from wristrec import Camera
         cam = Camera(int(index), 640, 480)
+        cam.latest()                                 # no frames within 5 s: CameraLost -> exit below
         first = sorted(servo_skills)[0]
         print(f"Loading SAM 3 + SAM 2 for the wrist camera (camera {index})…")
         aligner = vs.Aligner(cam, vs.prompt_for(first, arm.load_skill(first)), show=False)
         return {"vs": vs, "cam": cam, "aligner": aligner, "kin": vs.Kinematics()}
-    except Exception as e:  # noqa: BLE001  (camera missing, model download, ...) -> refuse those skills later
-        print(f"wrist camera: failed to start ({type(e).__name__}: {e})")
-        return None
+    except Exception as e:  # noqa: BLE001  (camera missing / no frames, model load, ...)
+        raise SystemExit(f"wrist camera: failed to start ({type(e).__name__}: {e}). Check its USB, "
+                         f"then `python wristrec.py --probe`; or run with --no-wrist") from None
+
+
+def stop_demo(why: str) -> None:
+    """Called from a skill thread: say why, then end listen.py the way Ctrl-C does (arms disconnect cleanly)."""
+    print(f"  ✖ {why}: stopping the demo")
+    speak("My wrist camera stopped working, so I'm stopping.", wait=True)
+    os.kill(os.getpid(), signal.SIGINT)
 
 
 def servo_run(wrist: dict, rig, name: str, skill: dict, should_stop) -> bool:
     """Play a wrist-camera skill: hover, line up on the tool, offset grasp. False if it didn't finish."""
     vs, a = wrist["vs"], arm.DEFAULT_ARM
+    if not wrist["cam"].alive():                     # check before the arm moves at all
+        stop_demo(f"wrist camera {wrist['cam'].index} is sending no frames")
+        return False
     solo = arm.solo(skill, a)
     wrist["aligner"].prompt = vs.prompt_for(name, solo)
     try:
@@ -249,7 +269,10 @@ def servo_run(wrist: dict, rig, name: str, skill: dict, should_stop) -> bool:
         print("  interrupted")
     except vs.ServoFailed as e:
         print(f"  gave up lining up: {e}")
-        speak(phrase("servo_failed", name))
+        if not wrist["cam"].alive():                 # the arm is home by now
+            stop_demo(f"wrist camera {wrist['cam'].index} stopped sending frames")
+        else:
+            speak(phrase("servo_failed", name))
     return False
 
 

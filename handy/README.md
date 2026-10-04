@@ -193,8 +193,10 @@ python visual_servoing.py screwdriver4 --show                 # line up + grasp
   Ctrl-C never moves the arm.
 - `listen.py` loads SAM 3 + SAM 2 and opens the wrist camera at startup (~12 s), and plays every skill that has
   these keys (black_motor2, screwdriver4) only through this line-up, never blind: "pick up the motor" lines up on the
-  motor first. If the line-up gives up, it says so and goes home; "stop" freezes the arm where it is. Without the
-  models (`--no-wrist`, or the camera missing) those skills are refused out loud.
+  motor first. If the line-up gives up, it says so and goes home; "stop" freezes the arm where it is.
+  If the wrist camera is unplugged or sends no frames, `listen.py` won't start (it checks that `WRIST_CAMERA` is the
+  USB camera, not the laptop's, which takes its index when the wrist one is unplugged). If it drops out mid-demo,
+  the arm goes home and the demo stops. `--no-wrist` runs without it and refuses those skills.
 - The joints sag (a commanded 3° jog moves about 1°), so one big move is never trusted: each step is measured again.
 - The table is linear but the view isn't: sliding sideways turns the camera with pan, so px/mm falls from 3.4 at 3 cm
   to 2.8 at 9 cm, and the joints' backlash moves the settled pose ~4.5 mm with the approach direction. black_motor2

@@ -28,7 +28,7 @@ import numpy as np
 
 import arm
 from adjust import SOLVE, Kinematics, shifted
-from wristrec import OUT, Camera
+from wristrec import OUT, Camera, CameraLost
 
 
 def rotvec(R: np.ndarray) -> np.ndarray:
@@ -202,12 +202,14 @@ class Aligner:
         self.tracker.track(frame)
         print(f"warmed up in {time.perf_counter() - t:.1f}s")
 
-    def fresh_frame(self, after: float) -> np.ndarray:
+    def fresh_frame(self, after: float, timeout: float = 2.0) -> np.ndarray:
         """First camera frame captured after time `after` (perf_counter)."""
         while True:
             frame, t, _ = self.cam.latest()
             if t > after:
                 return frame
+            if time.perf_counter() - after > timeout:
+                raise CameraLost(f"camera {self.cam.index} stopped sending frames")
             time.sleep(0.01)
 
     def detect(self, frame: np.ndarray):
@@ -271,9 +273,9 @@ def servo_grasp(rig, a: str, skill: dict, aligner: Aligner, kin: Kinematics, *, 
         raise Stopped()
     try:
         D, frames = _line_up(rig, a, skill, aligner, kin, tol, gain, max_step, max_offset, iters, should_stop)
-    except ServoFailed as e:
+    except (ServoFailed, CameraLost) as e:
         go_home(rig, a, skill, str(e), should_stop)
-        raise
+        raise ServoFailed(str(e)) from e
     if align_only:
         return D
     if not arm.play(rig, arm.on(a, {**skill, "frames": frames[hover:]}), should_stop=should_stop):

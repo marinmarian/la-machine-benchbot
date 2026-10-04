@@ -43,6 +43,25 @@ JOG_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"]
 HELP = "r rec  s snap  h hold  j jog  k slide  c continue  q quit"
 
 
+def mac_cameras() -> list[str]:
+    """Camera names in macOS's order, which is OpenCV's index order (empty if not macOS)."""
+    import subprocess
+    try:
+        out = subprocess.run(["system_profiler", "SPCameraDataType", "-json"], capture_output=True, text=True,
+                             timeout=10).stdout
+        return [c.get("_name", "?") for c in json.loads(out).get("SPCameraDataType", [])]
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+
+
+def built_in(name: str) -> bool:
+    return any(w in name for w in ("MacBook", "FaceTime", "iPhone", "Desk View"))
+
+
+class CameraLost(RuntimeError):
+    """The camera stopped sending frames (unplugged, or the USB link dropped)."""
+
+
 class Camera:
     """Newest frame, its capture time and a counter, from a background thread."""
 
@@ -70,10 +89,14 @@ class Camera:
         while self.frame is None and time.perf_counter() - t < timeout:
             time.sleep(0.02)
         if self.frame is None:
-            raise RuntimeError(f"camera {self.index} opened but sent no frames: replug its USB "
-                               f"(if the index changes, find it with --probe)")
+            raise CameraLost(f"camera {self.index} opened but sent no frames: replug its USB "
+                             f"(if the index changes, find it with --probe)")
         with self._lock:
             return self.frame, self.t, self.seq
+
+    def alive(self, max_age: float = 1.0) -> bool:
+        """A frame arrived within the last max_age seconds."""
+        return self.frame is not None and time.perf_counter() - self.t < max_age
 
     def close(self):
         self._stop.set()
