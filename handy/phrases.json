@@ -1,0 +1,25 @@
+{
+  "_comment": "What Handy says. Per skill: 'start' is spoken when the command is understood (before the arm moves), 'done' when the skill finishes. '_default' covers skills not listed. One variant is picked at random.",
+  "start": {
+    "screwdriver": ["Screwdriver, coming up.", "Sure, grabbing the screwdriver.", "One screwdriver, on its way."],
+    "microphone":  ["Microphone, coming up.", "Sure, getting the microphone."],
+    "handoff":     ["Passing it over.", "Switching hands."],
+    "clean":       ["Clearing the bench.", "On it, tidying up."],
+    "return_tool": ["I'll take that back.", "Thanks, putting it away."],
+    "home":        ["Going home."],
+    "_default":    ["On it.", "Sure.", "Coming right up."]
+  },
+  "done": {
+    "screwdriver": ["Here you go.", "There's your screwdriver."],
+    "microphone":  ["Here you go.", "Microphone's ready."],
+    "handoff":     ["Done.", "Got it on the other side."],
+    "clean":       ["All clean.", "Bench is clear."],
+    "return_tool": ["Stored.", "Back in its slot."],
+    "_default":    ["Done."]
+  },
+  "stop":    ["Stopping.", "Okay, holding still."],
+  "busy":    ["One moment, I'm busy.", "Hang on, almost done."],
+  "unknown": ["Sorry, I didn't get that.", "Say that again?"],
+  "missing": ["I don't know how to do {skill} yet."],
+  "hello":   ["Handy here. What do you need?"]
+}

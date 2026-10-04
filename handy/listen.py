@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
+import random
 import shutil
 import subprocess
 import sys
@@ -33,21 +35,47 @@ import vision
 
 SAMPLE_RATE = 16000
 COMMANDS_FILE = Path(__file__).parent / "commands.json"
+PHRASES_FILE = Path(__file__).parent / "phrases.json"
 STOP_WORDS = {"stop", "halt", "freeze"}
 SAY = shutil.which("say")          # macOS offline TTS; None elsewhere -> print only
+TTS_VOICE = os.environ.get("TTS_VOICE", "")   # e.g. Ava or Zoe after downloading a Premium voice; "" = system default
 speaking = threading.Event()       # set while we talk so the mic ignores our own voice
+_speak_lock = threading.Lock()     # one utterance at a time
+PHRASES: dict = json.loads(PHRASES_FILE.read_text()) if PHRASES_FILE.exists() else {}
 
 
-def speak(msg: str) -> None:
+def phrase(kind: str, skill: str | None = None, **fmt) -> str | None:
+    """Pick a random line from phrases.json: PHRASES[kind][skill] -> [kind]['_default'] -> [kind]."""
+    table = PHRASES.get(kind)
+    if isinstance(table, dict):
+        table = table.get(skill) or table.get("_default")
+    if not table:
+        return None
+    return random.choice(table).format(skill=(skill or "").replace("_", " "), **fmt)
+
+
+def speak(msg: str | None, wait: bool = False) -> None:
+    """Say `msg` (non-blocking by default so the arm starts moving while we talk).
+    The mic is muted for the whole utterance plus a short tail so we never hear ourselves."""
+    if not msg:
+        return
     print(f"  🗣 {msg}")
     if not SAY:
         return
-    speaking.set()
-    try:
-        subprocess.run([SAY, msg], check=False)
-        time.sleep(0.4)            # let the room tail die before listening again
-    finally:
-        speaking.clear()
+
+    def _say():
+        with _speak_lock:
+            speaking.set()
+            try:
+                subprocess.run([SAY] + (["-v", TTS_VOICE] if TTS_VOICE else []) + [msg], check=False)
+                time.sleep(0.4)            # let the room tail die before listening again
+            finally:
+                speaking.clear()
+
+    t = threading.Thread(target=_say, daemon=True)
+    t.start()
+    if wait:
+        t.join()
 
 
 # ---------- command routing ----------
@@ -163,15 +191,19 @@ def main():
         if skills == ["__stop__"]:
             stop_flag.set()
             print("  ⏹ stop")
+            speak(phrase("stop"))
             return
         if not busy.acquire(blocking=False):
             print("  (busy — say 'stop' first)")
+            speak(phrase("busy"))
             return
         try:
             stop_flag.clear()
+            speak(phrase("start", skills[0]))          # acknowledge right away, before any motion
             for s in skills:
                 if not arm.skill_path(s).exists():
                     print(f"  skill '{s}' not recorded yet (python record.py {s})")
+                    speak(phrase("missing", s))
                     break
                 if use_vision:
                     ok, why = vision.requirement_ok(s, frame=cam.latest() if cam else None)
@@ -182,10 +214,12 @@ def main():
                 print(f"  ▶ {s} ({', '.join(arm.skill_arms(skill))})")
                 if rig is None:
                     time.sleep(1.0)
+                    speak(phrase("done", s))
                     continue
                 if not arm.play(rig, skill, speed=args.speed, should_stop=stop_flag.is_set):
                     print("  interrupted")
                     break
+                speak(phrase("done", s))
             print("  ✓ done")
         finally:
             busy.release()
@@ -195,6 +229,8 @@ def main():
         skills = route(text, table)
         if skills is None:
             print("  (no match)")
+            if len(text.split()) >= 2:
+                speak(phrase("unknown"))
             return
         threading.Thread(target=run, args=(skills,), daemon=True).start()
 
@@ -213,6 +249,7 @@ def main():
                 dispatch(text)
 
     print("Listening. Speak, or type a command + Enter. Ctrl-C to quit." + ("  (q in the camera window also quits)" if cam else ""))
+    speak(phrase("hello"))
     try:
         if cam:
             threading.Thread(target=listen_loop, daemon=True).start()
