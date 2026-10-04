@@ -1,6 +1,6 @@
 """Fine-tune a small YOLO on the frames collected with collect.py.
 
-    python train.py                  # ~40 epochs on the Mac GPU (mps), writes weights/benchbot.pt
+    python train.py                  # ~40 epochs on the Mac GPU (mps), writes weights/handy.pt
     python train.py --epochs 60 --device cpu
 
 Needs weights/yolov8n.pt (pretrained start, 6 MB) and dataset/ from collect.py. Fully offline.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 DS = HERE / "dataset"
-OUT = HERE / "weights" / "benchbot.pt"
+OUT = HERE / "weights" / "handy.pt"
 BASE = HERE / "weights" / "yolov8n.pt"
 
 
@@ -52,7 +52,7 @@ def main():
     yaml = build_split()
     model = YOLO(str(BASE))
     model.train(data=str(yaml), epochs=args.epochs, imgsz=args.imgsz, device=args.device, batch=args.batch,
-                plots=False, workers=0, project=str(HERE / "runs"), name="benchbot", exist_ok=True)
+                plots=False, workers=0, project=str(HERE / "runs"), name="handy", exist_ok=True)
     best = Path(model.trainer.save_dir) / "weights" / "best.pt"
     shutil.copy(best, OUT)
     print(f"\nsaved detector -> {OUT}")

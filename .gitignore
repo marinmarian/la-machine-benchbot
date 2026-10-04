@@ -5,11 +5,14 @@ node_modules/
 *.pdf
 slide-*.jpg
 .env
-benchbot/vision/
-benchbot/dataset/
-benchbot/runs/
-benchbot/weights/yolov8n.pt
+handy/vision/
+handy/dataset/
+handy/runs/
+handy/weights/yolov8n.pt
 
-benchbot/wrist_data/
-benchbot/skills/backup/
+handy/wrist_data/
+handy/skills/backup/
 .DS_Store
+
+# pitch deck and script stay local only
+pitch/

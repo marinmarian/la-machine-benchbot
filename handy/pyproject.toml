@@ -1,7 +1,7 @@
 [project]
-name = "benchbot"
+name = "handy"
 version = "0.1.0"
-description = "Voice-triggered record & replay for the SO-101 repair-bench helper"
+description = "Handy: voice-triggered record & replay for the SO-101 repair-bench helper"
 requires-python = ">=3.10"
 dependencies = [
     "lerobot[feetech]>=0.4",

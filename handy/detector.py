@@ -1,4 +1,4 @@
-"""YOLO tool detector trained with train.py (weights/benchbot.pt). Used by vision.py when present.
+"""YOLO tool detector trained with train.py (weights/handy.pt). Used by vision.py when present.
 
     python detector.py vision/bench_test_frame.jpg     # print detections on a saved frame
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-WEIGHTS = Path(__file__).parent / "weights" / "benchbot.pt"
+WEIGHTS = Path(__file__).parent / "weights" / "handy.pt"
 CONF = 0.5          # minimum confidence for a detection to count as "the tool is on the bench"
 _model = None
 

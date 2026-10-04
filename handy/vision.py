@@ -241,7 +241,7 @@ def cmd_capture(args):
     print(f"saved {REFS[args.which]}  ({frame.shape[1]}x{frame.shape[0]})")
 
 
-def watch(cam: LiveCamera, cfg: dict, window: str = "benchbot camera (q to quit)", stop: threading.Event | None = None) -> None:
+def watch(cam: LiveCamera, cfg: dict, window: str = "Handy camera (q to quit)", stop: threading.Event | None = None) -> None:
     """Show the live frame with every slot boxed and labelled until q is pressed or `stop` is set."""
     refs = None if detector.available() else {k: cv2.imread(str(p)) for k, p in REFS.items()}
     while not (stop and stop.is_set()):

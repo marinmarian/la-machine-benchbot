@@ -1,4 +1,4 @@
-# benchbot — voice-triggered SO-101 bench helper
+# Handy — voice-triggered SO-101 bench helper
 
 Record a motion once with the leader arm(s), replay it by name with your voice. Fully offline.
 One arm or two: a skill file holds every arm that was recording, keyed `right_…`/`left_…`.
@@ -25,14 +25,14 @@ correctly on the arm they were recorded on). `{ARM}_FOLLOWER_PORT` / `{ARM}_LEAD
 for a board that can't be identified. `python ports.py` pings every `/dev/tty.usbmodem*` and guesses leader vs
 follower; useful for a board whose motors match no calibration yet.
 Calibration files live in `~/.cache/huggingface/lerobot/calibration/` and a copy is committed under
-`benchbot/calibration/` (same layout; ids `follower_so101`, `leader_so101`, plus `*_left` for the second pair).
+`handy/calibration/` (same layout; ids `follower_so101`, `leader_so101`, plus `*_left` for the second pair).
 Restore them on a fresh machine with:
 
 ```bash
-cp -R benchbot/calibration/. ~/.cache/huggingface/lerobot/calibration/
+cp -R handy/calibration/. ~/.cache/huggingface/lerobot/calibration/
 ```
 
-Recorded skills (`benchbot/skills/*.json`) are committed too; they only replay correctly on the arms they were recorded with.
+Recorded skills (`handy/skills/*.json`) are committed too; they only replay correctly on the arms they were recorded with.
 
 Run scripts with the env active: `python record.py home`, `python replay.py home`, `python listen.py`.
 Every script takes `--arms right` (or `left`, or `right,left`) to drive a subset; the default is all arms in `ARMS`.
@@ -101,14 +101,14 @@ python collect.py --background --keep-empty
 python collect.py screwdriver
 python collect.py microphone                   # class name = skill name
 python collect.py motor  ...
-python train.py                                # ~40 epochs on the Mac GPU -> weights/benchbot.pt
+python train.py                                # ~40 epochs on the Mac GPU -> weights/handy.pt
 python vision.py watch                         # boxes now come from the detector
 ```
 
 - Labels come from background subtraction against `vision/empty.jpg`: frames with no object, two
   objects, or an object touching the frame edge are skipped (the window says so).
 - Weak class? 30 more seconds of `collect.py <class>` then `train.py` again beats more epochs.
-- `weights/benchbot.pt` (~6 MB) is committed so a fresh clone demos. `dataset/` and `runs/` are not.
+- `weights/handy.pt` (~6 MB) is committed so a fresh clone demos. `dataset/` and `runs/` are not.
 - Re-check `vision.py watch` in the demo room; retrain only if a class drops out.
 
 ## Wrist camera dataset (for SAM alignment experiments)
