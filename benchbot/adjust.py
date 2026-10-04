@@ -28,7 +28,7 @@ import arm
 
 URDF = Path(__file__).parent / "urdf" / "so101_new_calib_kinematics.urdf"
 SOLVE = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"]
-MAX_RESIDUAL_M = 0.001
+MAX_RESIDUAL_M = 0.003   # four joints trade 1-2 mm against keeping the gripper vertical; a grasp tolerates that
 
 
 class Kinematics:
