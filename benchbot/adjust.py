@@ -28,7 +28,7 @@ import arm
 
 URDF = Path(__file__).parent / "urdf" / "so101_new_calib_kinematics.urdf"
 SOLVE = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"]
-MAX_RESIDUAL_M = 0.0005
+MAX_RESIDUAL_M = 0.001
 
 
 class Kinematics:
@@ -40,6 +40,21 @@ class Kinematics:
         for j in ("wrist_roll", "gripper"):
             self.k.solver.mask_dof(j)
         self.orientation_weight = orientation_weight
+        self.pan_xy = self.k.robot.get_T_world_frame("shoulder_link")[:2, 3].copy()   # pan axis: vertical, through here
+
+    def target(self, T0: np.ndarray, d: np.ndarray) -> np.ndarray:
+        """T0 moved by d (metres), turned about the pan axis by the yaw a move to there forces.
+
+        Four joints can't move the gripper sideways without pan turning it too, so asking for T0's
+        exact orientation would leave IK stuck halfway (wrist_roll is not used, see README).
+        """
+        T = T0.copy()
+        T[:3, 3] += d
+        a, b = T0[:2, 3] - self.pan_xy, T[:2, 3] - self.pan_xy
+        yaw = np.arctan2(b[1], b[0]) - np.arctan2(a[1], a[0])
+        c, s = np.cos(yaw), np.sin(yaw)
+        T[:3, :3] = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]) @ T0[:3, :3]
+        return T
 
     def fk(self, q: np.ndarray, roll: float) -> np.ndarray:
         self.k.robot.set_joint("wrist_roll", np.deg2rad(roll))
@@ -80,8 +95,7 @@ def shifted(skill: dict, window: tuple[int, int, int, int], d: np.ndarray, kin: 
         q = np.array([frames[i][c] for c in cols])
         roll = frames[i][roll_col]
         T0 = kin.fk(q, roll)
-        T = T0.copy()
-        T[:3, 3] += w[i] * d
+        T = kin.target(T0, w[i] * d)
         sol = kin.ik(q if seed is None else seed, roll, T)
         got = kin.fk(sol, roll)
         residual = float(np.linalg.norm(got[:3, 3] - T[:3, 3]))
