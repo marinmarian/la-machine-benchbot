@@ -11,6 +11,8 @@ dependencies = [
     "rapidfuzz",
     "opencv-python",
     "placo",            # adjust.py kinematics
+    "transformers>=5.0",  # samseg.py: SAM 3 + SAM 2 (visual_servoing.py)
+    "torchvision",
 ]
 
 [tool.uv]

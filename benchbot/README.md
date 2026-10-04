@@ -90,7 +90,7 @@ python wristrec.py screw1 --skill screwdriver --hold-at-hover   # replay up to 2
 ```
 
 A skill can store its hold point as `"hover_frame": N` in its JSON (screwdriver4 has 141: whole tool in view,
-room to slide it under the open jaws). Then `--hold-at-hover` stops there instead of guessing 2 s before the grasp; `--hover-frame N` overrides both.
+room to slide it under the open jaws; black_motor2 has 219, its pause about 6 cm above where the jaws close). Then `--hold-at-hover` stops there instead of guessing 2 s before the grasp; `--hover-frame N` overrides both.
 
 - `j` (only while holding) nudges pan, lift, elbow and wrist_flex ±3° and saves one settled frame per
   position, tagged `jog/<joint>/<±deg>`. Those frames give the pixels-per-degree table.
@@ -118,6 +118,27 @@ python adjust.py screwdriver4 --dz -0.3 --window 164 180 250 282
   The dry run prints the achieved shift, any tilt and the joint changes per frame.
 - The original goes to `skills/backup/` (not committed) and the skill's `"adjustments"` list logs what was done.
 - Needs `uv pip install placo`.
+
+## Lining up on the tool with the wrist camera (`visual_servoing.py`)
+
+The skill plays to its `hover_frame` and stops. SAM 3 finds the tool by text, SAM 2 tracks it, and the
+gripper steps sideways at the same height until the tool sits where it sat in the recording. Then the
+grasp plays shifted by that offset, which eases back to the recorded path during the lift.
+
+```bash
+python visual_servoing.py screwdriver4 --fit-table screw4_2   # done: pixels per mm at the hover, from wristrec's jog frames
+python visual_servoing.py screwdriver4 --set-target           # tool exactly where the recording grasps it: save where it looks
+python visual_servoing.py screwdriver4 --align-only --show    # move the tool, check it lines up (stops at the hover)
+python visual_servoing.py screwdriver4 --show                 # line up + grasp
+```
+
+- Skill keys: `hover_frame`, `rejoin` [c, e] (full offset until frame c, back on the recording by e;
+  screwdriver4: 250, 282; black_motor2: 338, 370, the start of the lift), `hover_px_per_mm`, `hover_target`, optional `prompt`.
+- Reach: any direction up to 3 cm, 4 cm except straight outward. Beyond `--max-offset` (40 mm) it stops at the hover.
+- The joints sag (a commanded 3° jog moves about 1°), so one big move is never trusted: each step is measured again.
+  About 2.3 s for the first detection on the Mac GPU, then about 0.4 s per tracked frame.
+- Moving sideways also turns the gripper a little, because pan is the only joint that can do it. The IK target
+  (`Kinematics.target` in `adjust.py`) includes that turn.
 
 ## Camera slot check (fallback, no model)
 
